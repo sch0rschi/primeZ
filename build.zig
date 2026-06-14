@@ -45,7 +45,7 @@ pub fn build(b: *std.Build) void {
     benchmark_step.dependOn(&run_benchmark_exe.step);
 
     const primeZ = b.addModule("primeZ", .{
-        .root_source_file = b.path("src/primeZ.zig"),
+        .root_source_file = b.path("src/root.zig"),
     });
     primeZ.addOptions("primeZConfig", options);
 }

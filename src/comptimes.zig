@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const Utils = @import("utils.zig");
-const Check = @import("prime_check.zig");
+const Check = @import("primeCheck.zig");
 const Types = @import("types.zig");
 
 pub const WHEEL_PRIMES = [_]Types.PRIME_TYPE{ 2, 3, 5 };

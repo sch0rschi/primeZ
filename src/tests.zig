@@ -1,9 +1,9 @@
 const std = @import("std");
 
 const Comptimes = @import("comptimes.zig");
-const Check = @import("prime_check.zig");
+const Check = @import("primeCheck.zig");
 const Utils = @import("utils.zig");
-const SegmentedSieve = @import("sieve_with_list.zig").SegmentedSieve;
+const SegmentedSieve = @import("fullSieve.zig").SegmentedSieve;
 
 test "Comptime WHEEL_CIRCUMFERENCE" {
     try std.testing.expectEqual(30, Comptimes.WHEEL_CIRCUMFERENCE);
