@@ -17,13 +17,14 @@ const SievePrime = struct {
     wheelStepIndex: u3,
 };
 
+pub const CollectError = error{LimitTooHigh};
+
 pub const SegmentedSieve = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
     limitInclusive: usize,
     sieve: []align(ALIGNMENT.toByteUnits()) Types.SIEVE_TYPE,
-    primes: []usize,
 
     pub fn init(allocator: std.mem.Allocator, limitInclusive: usize) !SegmentedSieve {
         const sieveLength = Utils.getSieveLength(limitInclusive);
@@ -36,21 +37,15 @@ pub const SegmentedSieve = struct {
         );
         try runSegmentedSieve(allocator, sieve, limitInclusive);
 
-        const estimatePrimeCount = Estimates.primeCountUpperBound(sieveLengthAligned * Comptimes.WHEEL_CIRCUMFERENCE);
-        var primes = try allocator.alloc(usize, estimatePrimeCount);
-        try collectPrimes(allocator, sieve, &primes, limitInclusive);
-
         return SegmentedSieve{
             .allocator = allocator,
             .limitInclusive = limitInclusive,
             .sieve = sieve,
-            .primes = primes,
         };
     }
 
     pub fn deinit(self: *Self) void {
         self.allocator.free(self.sieve);
-        self.allocator.free(self.primes);
     }
 
     pub fn isPrime(self: Self, n: usize) bool {
@@ -76,6 +71,42 @@ pub const SegmentedSieve = struct {
             .lastSieveWordIndex = words.len -| 1,
             .workingWord = if (words.len > 0) words[0] else 0,
         };
+    }
+
+    pub fn getPrimes(self: SegmentedSieve, allocator: std.mem.Allocator) ![]Types.PRIME_TYPE {
+        return getPrimesToLimit(self, allocator, self.limitInclusive);
+    }
+
+    pub fn getPrimesToLimit(
+        self: Self,
+        allocator: std.mem.Allocator,
+        limitInclusive: usize,
+    ) ![]Types.PRIME_TYPE {
+        if (limitInclusive > self.limitInclusive) {
+            return error.LimitTooHigh;
+        }
+
+        const estimatePrimeCount = Estimates.primeCountUpperBound(limitInclusive);
+        var primes = try allocator.alloc(usize, estimatePrimeCount);
+
+        var primeCount: usize = 0;
+        inline for (Comptimes.WHEEL_PRIMES) |p| {
+            if (p <= limitInclusive) {
+                primes[primeCount] = p;
+                primeCount += 1;
+            }
+        }
+
+        const bytes = std.mem.sliceAsBytes(self.sieve);
+        const words = std.mem.bytesAsSlice(u64, bytes);
+        for (0..words.len - 1, words[0 .. words.len - 1]) |sieveWordIndex, sieveWord| {
+            @prefetch(&words[@min(sieveWordIndex + 1, words.len - 1)], .{ .rw = .read, .locality = 0, .cache = .data });
+            addPrimesForSieveWord(sieveWord, sieveWordIndex, &primes, &primeCount, limitInclusive, false);
+        }
+
+        addPrimesForSieveWord(words[words.len - 1], words.len - 1, &primes, &primeCount, limitInclusive, true);
+        primes = try allocator.realloc(primes, primeCount);
+        return primes;
     }
 };
 
@@ -196,32 +227,6 @@ fn applySievePrimeForResidue(
 
     sievePrime.currentSieveIndex = startSieveIndex + sieveAdvance;
     sievePrime.wheelStepIndex = 0;
-}
-
-pub fn collectPrimes(
-    allocator: std.mem.Allocator,
-    sieve: []const Types.SIEVE_TYPE,
-    primes: *[]usize,
-    limitInclusive: usize,
-) !void {
-    var primeCount: usize = 0;
-
-    inline for (Comptimes.WHEEL_PRIMES) |p| {
-        if (p <= limitInclusive) {
-            primes.*[primeCount] = p;
-            primeCount += 1;
-        }
-    }
-
-    const bytes = std.mem.sliceAsBytes(sieve);
-    const words = std.mem.bytesAsSlice(u64, bytes);
-    for (0..words.len - 1, words[0 .. words.len - 1]) |sieveWordIndex, sieveWord| {
-        @prefetch(&words[@min(sieveWordIndex + 1, words.len - 1)], .{ .rw = .read, .locality = 0, .cache = .data });
-        addPrimesForSieveWord(sieveWord, sieveWordIndex, primes, &primeCount, limitInclusive, false);
-    }
-
-    addPrimesForSieveWord(words[words.len - 1], words.len - 1, primes, &primeCount, limitInclusive, true);
-    primes.* = try allocator.realloc(primes.*, primeCount);
 }
 
 fn addPrimesForSieveWord(workingWord: u64, sieveWordIndex: usize, primes: *[]Types.PRIME_TYPE, primeCount: *usize, limitInclusive: Types.PRIME_TYPE, comptime addLimitCheck: bool) void {

@@ -11,6 +11,8 @@ pub fn main(init: std.process.Init) !void {
     const t0 = std.Io.Clock.now(.awake, io);
     for (0..RUNS) |_| {
         var segmentedSieve = try SegmentedSieve.init(allocator, LIMIT);
+        const primes = try segmentedSieve.getPrimes(allocator);
+        defer allocator.free(primes);
         iterator(segmentedSieve);
         defer segmentedSieve.deinit();
     }
