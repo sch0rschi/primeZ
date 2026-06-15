@@ -3,7 +3,7 @@ const std = @import("std");
 const Comptimes = @import("comptimes.zig");
 const Check = @import("primeCheck.zig");
 const Utils = @import("utils.zig");
-const SegmentedSieve = @import("fullSieve.zig").SegmentedSieve;
+const QuerySieve = @import("querySieve.zig").QuerySieve;
 
 test "Comptime WHEEL_CIRCUMFERENCE" {
     try std.testing.expectEqual(30, Comptimes.WHEEL_CIRCUMFERENCE);
@@ -53,7 +53,7 @@ test "Comptime GAP_PATTERN" {
 }
 
 test "Sieve with primes" {
-    var sieveWithPrimesSmall = try SegmentedSieve.init(std.testing.allocator, 10_000);
+    var sieveWithPrimesSmall = try QuerySieve.init(std.testing.allocator, 10_000);
     defer sieveWithPrimesSmall.deinit();
 
     const primesFromSmallSieve = try sieveWithPrimesSmall.getPrimes(std.testing.allocator);
@@ -174,6 +174,6 @@ test "Sieve with primes" {
     }
     try std.testing.expectEqual(0, failCount);
 
-    var sieveWithPrimesLarge = try SegmentedSieve.init(std.testing.allocator, 100_000_000);
+    var sieveWithPrimesLarge = try QuerySieve.init(std.testing.allocator, 100_000_000);
     defer sieveWithPrimesLarge.deinit();
 }

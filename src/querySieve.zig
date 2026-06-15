@@ -10,23 +10,16 @@ const Types = @import("types.zig");
 const ALIGNMENT = std.mem.Alignment.@"8";
 const SEGMENT_ELEMS: usize = 1024 * config.l1_cache_size;
 
-const SievePrime = struct {
-    currentSieveIndex: usize,
-    initialSieveIndex: u32,
-    lsb: u3,
-    wheelStepIndex: u3,
-};
-
 pub const CollectError = error{LimitTooHigh};
 
-pub const SegmentedSieve = struct {
+pub const QuerySieve = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
     limitInclusive: usize,
     sieve: []align(ALIGNMENT.toByteUnits()) Types.SIEVE_TYPE,
 
-    pub fn init(allocator: std.mem.Allocator, limitInclusive: usize) !SegmentedSieve {
+    pub fn init(allocator: std.mem.Allocator, limitInclusive: usize) !QuerySieve {
         const sieveLength = Utils.getSieveLength(limitInclusive);
         const sieveLengthAligned = ALIGNMENT.forward(sieveLength);
 
@@ -37,7 +30,7 @@ pub const SegmentedSieve = struct {
         );
         try runSegmentedSieve(allocator, sieve, limitInclusive);
 
-        return SegmentedSieve{
+        return QuerySieve{
             .allocator = allocator,
             .limitInclusive = limitInclusive,
             .sieve = sieve,
@@ -73,7 +66,7 @@ pub const SegmentedSieve = struct {
         };
     }
 
-    pub fn getPrimes(self: SegmentedSieve, allocator: std.mem.Allocator) ![]Types.PRIME_TYPE {
+    pub fn getPrimes(self: QuerySieve, allocator: std.mem.Allocator) ![]Types.PRIME_TYPE {
         return getPrimesToLimit(self, allocator, self.limitInclusive);
     }
 
@@ -119,7 +112,7 @@ fn runSegmentedSieve(allocator: std.mem.Allocator, sieve: []Types.SIEVE_TYPE, li
     var segmentStart: usize = 0;
     var segmentEnd: usize = @min(SEGMENT_ELEMS, sieve.len);
 
-    var sievePrimes = try std.ArrayList(SievePrime).initCapacity(allocator, Estimates.primeCountUpperBound(rootPrime));
+    var sievePrimes = try std.ArrayList(Types.SievePrime).initCapacity(allocator, Estimates.primeCountUpperBound(rootPrime));
     defer sievePrimes.deinit(allocator);
 
     while (segmentStart < sieve.len) : ({
@@ -167,7 +160,7 @@ fn runSegmentedSieve(allocator: std.mem.Allocator, sieve: []Types.SIEVE_TYPE, li
 fn applySievePrimeIntoSegment(
     sieve: []Types.SIEVE_TYPE,
     segmentEnd: usize,
-    sievePrime: *SievePrime,
+    sievePrime: *Types.SievePrime,
 ) void {
     inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |lsb| {
         if (sievePrime.lsb == lsb) {
@@ -179,7 +172,7 @@ fn applySievePrimeIntoSegment(
 fn applySievePrimeForResidue(
     sieve: []Types.SIEVE_TYPE,
     segmentEnd: usize,
-    sievePrime: *SievePrime,
+    sievePrime: *Types.SievePrime,
     comptime lsb: usize,
 ) void {
     const wheelPattern = Comptimes.CUMULATIVE_WHEEL_PATTERNS[lsb];
