@@ -1,3 +1,4 @@
-pub const sieve = @import("querySieve.zig");
-pub const prime_check = @import("primeCheck.zig");
-pub const estimates = @import("estimates.zig");
+pub const QuerySieve = @import("querySieve.zig");
+pub const StreamingSieve = @import("streamingSieve.zig");
+pub const PrimeCheck = @import("primeCheck.zig");
+pub const Estimates = @import("estimates.zig");

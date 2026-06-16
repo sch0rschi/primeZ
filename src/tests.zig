@@ -4,6 +4,7 @@ const Comptimes = @import("comptimes.zig");
 const Check = @import("primeCheck.zig");
 const Utils = @import("utils.zig");
 const QuerySieve = @import("querySieve.zig").QuerySieve;
+const StreamingSieve = @import("streamingSieve.zig").StreamingSieve;
 
 test "Comptime WHEEL_CIRCUMFERENCE" {
     try std.testing.expectEqual(30, Comptimes.WHEEL_CIRCUMFERENCE);
@@ -176,4 +177,19 @@ test "Sieve with primes" {
 
     var sieveWithPrimesLarge = try QuerySieve.init(std.testing.allocator, 100_000_000);
     defer sieveWithPrimesLarge.deinit();
+}
+
+test "nth Prime" {
+    const firstPrime = try StreamingSieve.nthPrime(std.testing.allocator, 0);
+    try std.testing.expectEqual(2, firstPrime);
+    const secondPrime = try StreamingSieve.nthPrime(std.testing.allocator, 1);
+    try std.testing.expectEqual(3, secondPrime);
+    const thirdPrime = try StreamingSieve.nthPrime(std.testing.allocator, 2);
+    try std.testing.expectEqual(5, thirdPrime);
+    const fourthPrime = try StreamingSieve.nthPrime(std.testing.allocator, 3);
+    try std.testing.expectEqual(7, fourthPrime);
+    const nthPrime = try StreamingSieve.nthPrime(std.testing.allocator, 10_000);
+    try std.testing.expectEqual(104_743, nthPrime);
+    const tenMillionthPrime = try StreamingSieve.nthPrime(std.testing.allocator, 10_000_000);
+    try std.testing.expectEqual(179_424_691, tenMillionthPrime);
 }

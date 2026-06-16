@@ -31,8 +31,8 @@ pub const GAP_PATTERN: [ADMISSIBLE_RESIDUES.count]usize = buildGapPattern();
 
 pub const WheelStep = struct {
     bitMask: u8,
-    divMultiplicator: usize,
-    residueAddend: usize,
+    divMultiplicator: comptime_int,
+    residueAddend: comptime_int,
 };
 
 pub const WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep = buildWheelPatterns();

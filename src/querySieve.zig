@@ -108,23 +108,26 @@ fn runSegmentedSieve(allocator: std.mem.Allocator, sieve: []Types.SIEVE_TYPE, li
     sieve[0] = Comptimes.FIRST_PRIME_SIEVE_ELEMENT;
 
     const rootPrime = std.math.sqrt(limitInclusive);
-    const rootSieveLimit = Utils.getSieveLength(rootPrime);
+    const rootSieveLimitExclusive = Utils.getSieveLength(rootPrime);
     var segmentStart: usize = 0;
-    var segmentEnd: usize = @min(SEGMENT_ELEMS, sieve.len);
+    var segmentEndExclusive: usize = @min(SEGMENT_ELEMS, sieve.len);
 
     var sievePrimes = try std.ArrayList(Types.SievePrime).initCapacity(allocator, Estimates.primeCountUpperBound(rootPrime));
     defer sievePrimes.deinit(allocator);
 
     while (segmentStart < sieve.len) : ({
         segmentStart += SEGMENT_ELEMS;
-        segmentEnd = @min(segmentStart + SEGMENT_ELEMS, sieve.len);
+        segmentEndExclusive = @min(segmentStart + SEGMENT_ELEMS, sieve.len);
     }) {
         for (sievePrimes.items) |*sievePrime| {
-            applySievePrimeIntoSegment(sieve, segmentEnd, sievePrime);
+            if (sievePrime.skipBefore >= segmentEndExclusive) {
+                break;
+            }
+            applySievePrimeIntoSegment(sieve, segmentEndExclusive, sievePrime);
         }
-        if (segmentStart < rootSieveLimit) {
-            for (segmentStart..@min(rootSieveLimit + 1, segmentEnd)) |sieveIndex| {
-                @prefetch(&sieve[@min(sieveIndex + 1, segmentEnd - 1)], .{ .rw = .read, .locality = 0, .cache = .data });
+        if (segmentStart < rootSieveLimitExclusive) {
+            for (segmentStart..@min(rootSieveLimitExclusive, segmentEndExclusive)) |sieveIndex| {
+                @prefetch(&sieve[@min(sieveIndex + 1, segmentEndExclusive - 1)], .{ .rw = .read, .locality = 0, .cache = .data });
                 var word = sieve[sieveIndex];
                 while (word != 0) {
                     const lsb: u3 = Utils.lsb(word);
@@ -144,13 +147,14 @@ fn runSegmentedSieve(allocator: std.mem.Allocator, sieve: []Types.SIEVE_TYPE, li
 
                     try sievePrimes.append(allocator, .{
                         .currentSieveIndex = sieveIndex + sieveAdvance * start,
+                        .skipBefore = sieveIndex + sieveAdvance * start,
                         .initialSieveIndex = @as(u32, @intCast(sieveIndex)),
                         .lsb = lsb,
                         .wheelStepIndex = @as(u3, @intCast(previousPrimeSquareWheelStepIndex)),
                     });
-                    applySievePrimeIntoSegment(sieve, segmentEnd, &sievePrimes.items[sievePrimes.items.len - 1]);
+                    applySievePrimeIntoSegment(sieve, segmentEndExclusive, &sievePrimes.items[sievePrimes.items.len - 1]);
 
-                    word -= @as(Types.SIEVE_TYPE, 1) << lsb;
+                    word &= word - 1;
                 }
             }
         }

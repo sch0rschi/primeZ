@@ -24,10 +24,10 @@ pub fn primeCountUpperBound(n: u64) u64 {
 pub fn nthPrimeUpperBound(n: u64) u64 {
     if (n < 6) {
         const small = [_]u64{ 2, 3, 5, 7, 11 };
-        return small[n - 1];
+        return small[n];
     }
 
-    const nf = @as(f64, @floatFromInt(n));
+    const nf = @as(f64, @floatFromInt(n+1));
     const ln = @log(nf);
     const lnln = @log(ln);
 
