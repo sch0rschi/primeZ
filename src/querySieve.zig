@@ -173,13 +173,18 @@ fn applySievePrimeForResidue(
     sieve: []Types.SIEVE_TYPE,
     segmentEnd: usize,
     sievePrime: *Types.SievePrime,
-    comptime lsb: usize,
+    comptime lsb: u3,
 ) void {
     const wheelPattern = Comptimes.CUMULATIVE_WHEEL_PATTERNS[lsb];
     const initialSieveIndex = sievePrime.initialSieveIndex;
     const sieveAdvance = sievePrime.initialSieveIndex * Comptimes.WHEEL_CIRCUMFERENCE + Comptimes.ADMISSIBLE_RESIDUES.list[lsb];
     var startSieveIndex = sievePrime.currentSieveIndex;
     var wheelStepIndex = sievePrime.wheelStepIndex;
+
+    var concreteStepSizes: [Comptimes.ADMISSIBLE_RESIDUES.count]usize = undefined;
+    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |step| {
+        concreteStepSizes[step] = initialSieveIndex * wheelPattern[step].divMultiplicator + wheelPattern[step].residueAddend;
+    }
 
     if (wheelStepIndex != 0) {
         inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |step| {
@@ -200,8 +205,9 @@ fn applySievePrimeForResidue(
 
     var endSieveIndex = startSieveIndex + sieveAdvance;
     while (endSieveIndex < segmentEnd) {
-        inline for (wheelPattern) |ws| {
-            sieve[startSieveIndex + initialSieveIndex * ws.divMultiplicator + ws.residueAddend] &= ws.bitMask;
+        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count, wheelPattern) |step, ws| {
+            const idx = startSieveIndex + concreteStepSizes[step];
+            sieve[idx] &= ws.bitMask;
         }
         startSieveIndex = endSieveIndex;
         endSieveIndex += sieveAdvance;
@@ -209,10 +215,10 @@ fn applySievePrimeForResidue(
 
     inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |step| {
         const ws = wheelPattern[step];
-        const idx = startSieveIndex + initialSieveIndex * ws.divMultiplicator + ws.residueAddend;
+        const idx = startSieveIndex + concreteStepSizes[step];
         if (idx >= segmentEnd) {
             sievePrime.currentSieveIndex = startSieveIndex;
-            sievePrime.wheelStepIndex = step;
+            sievePrime.wheelStepIndex = @as(u3, @intCast(step));
             return;
         }
         sieve[idx] &= ws.bitMask;
