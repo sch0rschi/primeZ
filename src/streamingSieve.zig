@@ -68,23 +68,19 @@ pub const StreamingSieve = struct {
                         const lsb: u3 = Utils.lsb(word);
 
                         const prime = Utils.admissibleNumberFromBitIndex(8 * sieveIndex + lsb);
+                        const primeSquareBit = Utils.admissibleNumberToBit(prime * prime);
+                        const primeSquareSieve = primeSquareBit / 8;
 
-                        var previousPrimeSquare = prime * prime - prime;
-                        while (Utils.isMultipleOfWheelPrime(previousPrimeSquare)) {
-                            previousPrimeSquare -= prime;
-                        }
-
-                        const previousPrimeSquareMultiple = previousPrimeSquare / prime;
-                        const previousPrimeSquareMultipleMod = previousPrimeSquareMultiple % Comptimes.WHEEL_CIRCUMFERENCE;
+                        const previousPrimeSquareMultipleMod = prime % Comptimes.WHEEL_CIRCUMFERENCE;
                         const previousPrimeSquareWheelStepIndex = Comptimes.ADMISSIBLE_RESIDUES.reverseMap[previousPrimeSquareMultipleMod];
 
                         const sieveAdvance = sieveIndex * Comptimes.WHEEL_CIRCUMFERENCE + Comptimes.ADMISSIBLE_RESIDUES.list[lsb];
-                        const start = previousPrimeSquareMultiple / Comptimes.WHEEL_CIRCUMFERENCE;
+                        const start = prime / Comptimes.WHEEL_CIRCUMFERENCE;
 
                         inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
                             if (ri == lsb) {
                                 try sievePrimesMap[ri].append(allocator, .{
-                                    .currentSieveIndex = sieveIndex + sieveAdvance * start,
+                                    .currentSieveIndex = primeSquareSieve,
                                     .skipBefore = sieveIndex + sieveAdvance * start,
                                     .initialSieveIndex = @as(u32, @intCast(sieveIndex)),
                                     .lsb = lsb,
@@ -123,60 +119,58 @@ pub const StreamingSieve = struct {
 fn applySievePrimeIntoSegment(
     sieve: []Types.SIEVE_TYPE,
     segmentStart: usize,
-    segmentEnd: usize,
+    segmentEndExclusive: usize,
     sievePrime: *Types.SievePrime,
     comptime lsb: u3,
 ) void {
-    var startSieveIndex = sievePrime.currentSieveIndex;
-    if (startSieveIndex>segmentEnd) {
-        return;
-    }
-    const wheelPattern = Comptimes.CUMULATIVE_WHEEL_PATTERNS[lsb];
-    const initialSieveIndex = sievePrime.initialSieveIndex;
-    var wheelStepIndex = sievePrime.wheelStepIndex;
-    var concreteStepSizes: [Comptimes.ADMISSIBLE_RESIDUES.count]usize = undefined;
-    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |step| {
-        concreteStepSizes[step] = initialSieveIndex * wheelPattern[step].divMultiplicator + wheelPattern[step].residueAddend;
-    }
-    const sieveAdvance = concreteStepSizes[7];
+    const wheelPattern = Comptimes.WHEEL_PATTERNS[lsb];
 
-    if (wheelStepIndex != 0) {
+    if (sievePrime.currentSieveIndex < segmentEndExclusive) {
+        const sieveWindow = segmentEndExclusive - segmentStart;
+        const initialSieveIndex = sievePrime.initialSieveIndex;
+        const wheelStepIndex = sievePrime.wheelStepIndex;
+        var currentSieveIndex = sievePrime.currentSieveIndex - segmentStart;
+
+        var concreteStepSizes: [Comptimes.ADMISSIBLE_RESIDUES.count]usize = undefined;
         inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |step| {
-            if (step >= wheelStepIndex) {
-                const wheelStep = wheelPattern[step];
-                const sieveIndex = startSieveIndex + concreteStepSizes[step];
-                if (sieveIndex >= segmentEnd) {
-                    sievePrime.currentSieveIndex = startSieveIndex;
-                    sievePrime.wheelStepIndex = @as(u3, @intCast(step));
-                    return;
+            concreteStepSizes[step] = initialSieveIndex * wheelPattern[step].divMultiplicator + wheelPattern[step].residueAddend;
+        }
+
+        if (wheelStepIndex > 0) {
+            inline for (1..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
+                if (wheelStepIndex <= ri) {
+                    if (currentSieveIndex < sieveWindow) {
+                        sieve[currentSieveIndex] &= wheelPattern[ri].bitMask;
+                        currentSieveIndex += concreteStepSizes[ri];
+                    } else {
+                        sievePrime.currentSieveIndex = currentSieveIndex + segmentStart;
+                        sievePrime.wheelStepIndex = ri;
+                        return;
+                    }
                 }
-                sieve[sieveIndex - segmentStart] &= wheelStep.bitMask;
             }
         }
-        startSieveIndex += sieveAdvance;
-        wheelStepIndex = 0;
-    }
 
-    var endSieveIndex = startSieveIndex + sieveAdvance;
-    while (endSieveIndex < segmentEnd) {
-        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count, wheelPattern) |step, ws| {
-            const idx = startSieveIndex + concreteStepSizes[step];
-            sieve[idx - segmentStart] &= ws.bitMask;
+        var advanceAfter7: usize = 0;
+        inline for (concreteStepSizes[0 .. Comptimes.ADMISSIBLE_RESIDUES.count - 1]) |step| {
+            advanceAfter7 += step;
         }
-        startSieveIndex = endSieveIndex;
-        endSieveIndex += sieveAdvance;
-    }
-
-    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |step| {
-        const ws = wheelPattern[step];
-        const idx = startSieveIndex + concreteStepSizes[step];
-        if (idx < segmentEnd) {
-            sieve[idx - segmentStart] &= ws.bitMask;
-        } else {
-            sievePrime.currentSieveIndex = startSieveIndex;
-            sievePrime.wheelStepIndex = @as(u3, @intCast(step));
-            return;
+        while (currentSieveIndex + advanceAfter7 < sieveWindow) {
+            inline for (0.., wheelPattern) |si, wheelStep| {
+                sieve[currentSieveIndex] &= wheelStep.bitMask;
+                currentSieveIndex += concreteStepSizes[si];
+            }
         }
 
+        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
+            if (currentSieveIndex < sieveWindow) {
+                sieve[currentSieveIndex] &= wheelPattern[ri].bitMask;
+                currentSieveIndex += concreteStepSizes[ri];
+            } else {
+                sievePrime.currentSieveIndex = currentSieveIndex + segmentStart;
+                sievePrime.wheelStepIndex = ri;
+                return;
+            }
+        }
     }
 }

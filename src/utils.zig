@@ -9,7 +9,7 @@ pub fn admissibleNumberFromBitIndex(bitIndex: usize) usize {
     return fullWheels * Comptimes.WHEEL_CIRCUMFERENCE + Comptimes.ADMISSIBLE_RESIDUES.list[rem];
 }
 
-pub fn numberToBit(number: usize) usize {
+pub fn admissibleNumberToBit(number: usize) usize {
     const div = number / Comptimes.WHEEL_CIRCUMFERENCE;
     const mod = number % Comptimes.WHEEL_CIRCUMFERENCE;
     std.debug.assert(Comptimes.ADMISSIBLE_RESIDUES.check[mod]);

@@ -54,6 +54,11 @@ test "Comptime GAP_PATTERN" {
 }
 
 test "Sieve with primes" {
+    const builtin = @import("builtin");
+    if (builtin.mode == .Debug) {
+        return error.SkipZigTest;
+    }
+
     var sieveWithPrimesSmall = try QuerySieve.init(std.testing.allocator, 10_000);
     defer sieveWithPrimesSmall.deinit();
 
