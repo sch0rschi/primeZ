@@ -46,6 +46,7 @@ pub const StreamingSieve = struct {
 
         var primeCount: usize = 2;
 
+        var sievePrimesActive: [Comptimes.ADMISSIBLE_RESIDUES.count]usize = .{0} ** Comptimes.ADMISSIBLE_RESIDUES.count;
         while (segmentStart < sieveLength) : ({
             segmentStart += SEGMENT_ELEMS;
             segmentEnd = @min(segmentStart + SEGMENT_ELEMS, sieveLength);
@@ -53,11 +54,18 @@ pub const StreamingSieve = struct {
         }) {
             inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
                 const sievePrimes = sievePrimesMap[ri];
-                for (sievePrimes.items) |*sievePrime| {
-                    if (sievePrime.skipBefore > segmentEnd) {
+                for (sievePrimes.items[0..sievePrimesActive[ri]]) |*sievePrime| {
+                    if (sievePrime.currentSieveIndex < segmentEnd) {
+                        applySievePrimeIntoSegment(sieve, segmentStart, segmentEnd, sievePrime, ri);
+                    }
+                }
+                for (sievePrimes.items[sievePrimesActive[ri]..]) |*sievePrime| {
+                    if (sievePrime.currentSieveIndex < segmentEnd) {
+                        applySievePrimeIntoSegment(sieve, segmentStart, segmentEnd, sievePrime, ri);
+                        sievePrimesActive[ri] += 1;
+                    } else {
                         break;
                     }
-                    applySievePrimeIntoSegment(sieve, segmentStart, segmentEnd, sievePrime, ri);
                 }
             }
 
@@ -74,14 +82,10 @@ pub const StreamingSieve = struct {
                         const previousPrimeSquareMultipleMod = prime % Comptimes.WHEEL_CIRCUMFERENCE;
                         const previousPrimeSquareWheelStepIndex = Comptimes.ADMISSIBLE_RESIDUES.reverseMap[previousPrimeSquareMultipleMod];
 
-                        const sieveAdvance = sieveIndex * Comptimes.WHEEL_CIRCUMFERENCE + Comptimes.ADMISSIBLE_RESIDUES.list[lsb];
-                        const start = prime / Comptimes.WHEEL_CIRCUMFERENCE;
-
                         inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
                             if (ri == lsb) {
                                 try sievePrimesMap[ri].append(allocator, .{
                                     .currentSieveIndex = primeSquareSieve,
-                                    .skipBefore = sieveIndex + sieveAdvance * start,
                                     .initialSieveIndex = @as(u32, @intCast(sieveIndex)),
                                     .lsb = lsb,
                                     .wheelStepIndex = @as(u3, @intCast(previousPrimeSquareWheelStepIndex)),

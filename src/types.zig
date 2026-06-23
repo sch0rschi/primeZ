@@ -10,7 +10,6 @@ pub const SIEVE_TYPE_SHIFT_TYPE = std.math.Log2Int(SIEVE_TYPE);
 
 pub const SievePrime = struct {
     currentSieveIndex: usize,
-    skipBefore: usize,
     initialSieveIndex: u32,
     lsb: u3,
     wheelStepIndex: u3,
