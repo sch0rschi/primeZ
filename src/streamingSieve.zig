@@ -86,9 +86,8 @@ pub const StreamingSieve = struct {
                             if (ri == lsb) {
                                 try sievePrimesMap[ri].append(allocator, .{
                                     .currentSieveIndex = primeSquareSieve,
-                                    .initialSieveIndex = @as(u32, @intCast(sieveIndex)),
-                                    .lsb = lsb,
-                                    .wheelStepIndex = @as(u3, @intCast(previousPrimeSquareWheelStepIndex)),
+                                    .initialSieveIndex = @intCast(sieveIndex),
+                                    .wheelStepIndex = @intCast(previousPrimeSquareWheelStepIndex),
                                 });
                                 applySievePrimeIntoSegment(sieve, segmentStart, segmentEnd, &sievePrimesMap[ri].items[sievePrimesMap[ri].items.len - 1], ri);
                             }
