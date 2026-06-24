@@ -29,15 +29,9 @@ pub const FIRST_PRIMES: [FIRST_PRIMES_COUNT]Types.PRIME_TYPE = buildFirstPrimes(
 
 pub const GAP_PATTERN: [ADMISSIBLE_RESIDUES.count]usize = buildGapPattern();
 
-pub const WheelStep = struct {
-    bitMask: u8,
-    divMultiplicator: usize,
-    residueAddend: usize,
-};
+pub const WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Types.WheelStep = buildWheelPatterns();
 
-pub const WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep = buildWheelPatterns();
-
-pub const CUMULATIVE_WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep = buildCumulativeWheelPatterns();
+pub const CUMULATIVE_WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Types.WheelStep = buildCumulativeWheelPatterns();
 
 fn computeWheelCircumference() usize {
     var product = 1;
@@ -128,8 +122,8 @@ fn buildAdmissibleResidues() AdmissibleResidues {
     };
 }
 
-fn buildWheelPatterns() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep {
-    var wheelPatterns: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep = undefined;
+fn buildWheelPatterns() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Types.WheelStep {
+    var wheelPatterns: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Types.WheelStep = undefined;
 
     for (ADMISSIBLE_RESIDUES.list, &wheelPatterns) |ar, *wp| {
         var number = ar;
@@ -146,6 +140,7 @@ fn buildWheelPatterns() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Wh
                 .bitMask = ~@as(Types.SIEVE_TYPE, 1 << ADMISSIBLE_RESIDUES.reverseMap[startNumber % WHEEL_CIRCUMFERENCE]),
                 .divMultiplicator = steps,
                 .residueAddend = (number / WHEEL_CIRCUMFERENCE) - (startNumber / WHEEL_CIRCUMFERENCE),
+                .dummy = 0,
             };
         }
     }
@@ -153,7 +148,7 @@ fn buildWheelPatterns() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Wh
     return wheelPatterns;
 }
 
-fn buildCumulativeWheelPatterns() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep {
+fn buildCumulativeWheelPatterns() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Types.WheelStep {
     var cumulativeWheelPatterns = WHEEL_PATTERNS;
 
     for (&cumulativeWheelPatterns) |*cumulativeWheelPattern| {

@@ -184,7 +184,7 @@ fn applySievePrimeIntoSegment(
 
         var concreteStepSizes: [Comptimes.ADMISSIBLE_RESIDUES.count]usize = undefined;
         inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |step| {
-            concreteStepSizes[step] = initialSieveIndex * wheelPattern[step].divMultiplicator + wheelPattern[step].residueAddend;
+            concreteStepSizes[step] = initialSieveIndex * @as(usize, wheelPattern[step].divMultiplicator) + @as(usize, wheelPattern[step].residueAddend);
         }
 
         if (wheelStepIndex > 0) {
@@ -251,18 +251,18 @@ fn apply2SievePrimesIntoSegment(
     while (currentSieveIndex0 < sieveWindow and currentSieveIndex1 < sieveWindow) {
         const step0 = &wheelPattern0[wheelStepIndex0];
         sieve[currentSieveIndex0] &= step0.bitMask;
-        currentSieveIndex0 += initialSieveIndex0 * step0.divMultiplicator + step0.residueAddend;
+        currentSieveIndex0 += initialSieveIndex0 * @as(usize, step0.divMultiplicator) + @as(usize, step0.residueAddend);
         wheelStepIndex0 +%= 1;
         const step1 = &wheelPattern1[wheelStepIndex1];
         sieve[currentSieveIndex1] &= step1.bitMask;
-        currentSieveIndex1 += initialSieveIndex1 * step1.divMultiplicator + step1.residueAddend;
+        currentSieveIndex1 += initialSieveIndex1 * @as(usize, step1.divMultiplicator) + @as(usize, step1.residueAddend);
         wheelStepIndex1 +%= 1;
     }
 
     while (currentSieveIndex0 < sieveWindow) {
         const step0 = wheelPattern0[wheelStepIndex0];
         sieve[currentSieveIndex0] &= step0.bitMask;
-        currentSieveIndex0 += initialSieveIndex0 * step0.divMultiplicator + step0.residueAddend;
+        currentSieveIndex0 += initialSieveIndex0 * @as(usize, step0.divMultiplicator) + @as(usize, step0.residueAddend);
         wheelStepIndex0 +%= 1;
     }
     sievePrime0.currentSieveIndex = currentSieveIndex0 + segmentStart;
@@ -271,90 +271,9 @@ fn apply2SievePrimesIntoSegment(
     while (currentSieveIndex1 < sieveWindow) {
         const step1 = wheelPattern1[wheelStepIndex1];
         sieve[currentSieveIndex1] &= step1.bitMask;
-        currentSieveIndex1 += initialSieveIndex1 * step1.divMultiplicator + step1.residueAddend;
+        currentSieveIndex1 += initialSieveIndex1 * @as(usize, step1.divMultiplicator) + @as(usize, step1.residueAddend);
         wheelStepIndex1 +%= 1;
     }
     sievePrime1.currentSieveIndex = currentSieveIndex1 + segmentStart;
     sievePrime1.wheelStepIndex = wheelStepIndex1;
-}
-
-fn apply3SievePrimesIntoSegment(
-    sieve: []Types.SIEVE_TYPE,
-    segmentStart: usize,
-    segmentEndExclusive: usize,
-    sievePrime0: *Types.SievePrime,
-    sievePrime1: *Types.SievePrime,
-    sievePrime2: *Types.SievePrime,
-) void {
-    const wheelPattern0 = Comptimes.WHEEL_PATTERNS[sievePrime0.initialInByteIndex];
-    const wheelPattern1 = Comptimes.WHEEL_PATTERNS[sievePrime1.initialInByteIndex];
-    const wheelPattern2 = Comptimes.WHEEL_PATTERNS[sievePrime2.initialInByteIndex];
-
-    const sieveWindow = segmentEndExclusive - segmentStart;
-
-    const initialSieveIndex0 = sievePrime0.initialSieveIndex;
-    const initialSieveIndex1 = sievePrime1.initialSieveIndex;
-    const initialSieveIndex2 = sievePrime2.initialSieveIndex;
-
-    var currentSieveIndex0 = sievePrime0.currentSieveIndex - segmentStart;
-    var currentSieveIndex1 = sievePrime1.currentSieveIndex - segmentStart;
-    var currentSieveIndex2 = sievePrime2.currentSieveIndex - segmentStart;
-
-    var wheelStepIndex0 = sievePrime0.wheelStepIndex;
-    var wheelStepIndex1 = sievePrime1.wheelStepIndex;
-    var wheelStepIndex2 = sievePrime2.wheelStepIndex;
-
-    while (currentSieveIndex0 < sieveWindow and
-        currentSieveIndex1 < sieveWindow and
-        currentSieveIndex2 < sieveWindow)
-    {
-        const step0 = wheelPattern0[wheelStepIndex0];
-        const step1 = wheelPattern1[wheelStepIndex1];
-        const step2 = wheelPattern2[wheelStepIndex2];
-
-        sieve[currentSieveIndex0] &= step0.bitMask;
-        sieve[currentSieveIndex1] &= step1.bitMask;
-        sieve[currentSieveIndex2] &= step2.bitMask;
-
-        currentSieveIndex0 += initialSieveIndex0 * step0.divMultiplicator + step0.residueAddend;
-        currentSieveIndex1 += initialSieveIndex1 * step1.divMultiplicator + step1.residueAddend;
-        currentSieveIndex2 += initialSieveIndex2 * step2.divMultiplicator + step2.residueAddend;
-
-        wheelStepIndex0 +%= 1;
-        wheelStepIndex1 +%= 1;
-        wheelStepIndex2 +%= 1;
-    }
-
-    while (currentSieveIndex0 < sieveWindow) {
-        const step0 = wheelPattern0[wheelStepIndex0];
-
-        sieve[currentSieveIndex0] &= step0.bitMask;
-        currentSieveIndex0 += initialSieveIndex0 * step0.divMultiplicator + step0.residueAddend;
-
-        wheelStepIndex0 +%= 1;
-    }
-    sievePrime0.currentSieveIndex = currentSieveIndex0 + segmentStart;
-    sievePrime0.wheelStepIndex = wheelStepIndex0;
-
-    while (currentSieveIndex1 < sieveWindow) {
-        const step1 = wheelPattern1[wheelStepIndex1];
-
-        sieve[currentSieveIndex1] &= step1.bitMask;
-        currentSieveIndex1 += initialSieveIndex1 * step1.divMultiplicator + step1.residueAddend;
-
-        wheelStepIndex1 +%= 1;
-    }
-    sievePrime1.currentSieveIndex = currentSieveIndex1 + segmentStart;
-    sievePrime1.wheelStepIndex = wheelStepIndex1;
-
-    while (currentSieveIndex2 < sieveWindow) {
-        const step2 = wheelPattern2[wheelStepIndex2];
-
-        sieve[currentSieveIndex2] &= step2.bitMask;
-        currentSieveIndex2 += initialSieveIndex2 * step2.divMultiplicator + step2.residueAddend;
-
-        wheelStepIndex2 +%= 1;
-    }
-    sievePrime2.currentSieveIndex = currentSieveIndex2 + segmentStart;
-    sievePrime2.wheelStepIndex = wheelStepIndex2;
 }

@@ -8,6 +8,13 @@ pub const SIEVE_TYPE_FULL_MASK = std.math.maxInt(SIEVE_TYPE);
 
 pub const SIEVE_TYPE_SHIFT_TYPE = std.math.Log2Int(SIEVE_TYPE);
 
+pub const WheelStep = struct {
+    bitMask: u8,
+    divMultiplicator: u8,
+    residueAddend: u8,
+    dummy: u8,
+};
+
 pub const SievePrime = struct {
     currentSieveIndex: usize,
     initialSieveIndex: u32,
