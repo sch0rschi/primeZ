@@ -118,7 +118,7 @@ pub const StreamingSieve = struct {
                         const previousPrimeSquareMultipleMod = prime % Comptimes.WHEEL_CIRCUMFERENCE;
                         const previousPrimeSquareWheelStepIndex = Comptimes.ADMISSIBLE_RESIDUES.reverseMap[previousPrimeSquareMultipleMod];
 
-                        if (prime < 10_000) { // the square of large primes must not fall in the same segment
+                        if (prime <= SEGMENT_ELEMS / 2) { // the square of large primes must not fall in the same segment
                             inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
                                 if (ri == lsb) {
                                     try smallSievePrimesMap[ri].append(allocator, .{
@@ -127,7 +127,9 @@ pub const StreamingSieve = struct {
                                         .initialInByteIndex = lsb,
                                         .wheelStepIndex = @intCast(previousPrimeSquareWheelStepIndex),
                                     });
-                                    applySievePrimeIntoSegment(sieve, segmentStart, segmentEnd, &smallSievePrimesMap[ri].items[smallSievePrimesMap[ri].items.len - 1], ri);
+                                    if (primeSquareSieve < segmentEnd) {
+                                        applySievePrimeIntoSegment(sieve, segmentStart, segmentEnd, &smallSievePrimesMap[ri].items[smallSievePrimesMap[ri].items.len - 1], ri);
+                                    }
                                 }
                             }
                         } else {
@@ -232,8 +234,8 @@ fn apply2SievePrimesIntoSegment(
 ) void {
     const sievePrime0 = sievePrimes[0];
     const sievePrime1 = sievePrimes[1];
-    const wheelPattern0 = Comptimes.WHEEL_PATTERNS[sievePrime0.initialInByteIndex];
-    const wheelPattern1 = Comptimes.WHEEL_PATTERNS[sievePrime1.initialInByteIndex];
+    const wheelPattern0 = &Comptimes.WHEEL_PATTERNS[sievePrime0.initialInByteIndex];
+    const wheelPattern1 = &Comptimes.WHEEL_PATTERNS[sievePrime1.initialInByteIndex];
 
     const sieveWindow = segmentEndExclusive - segmentStart;
 
@@ -247,25 +249,20 @@ fn apply2SievePrimesIntoSegment(
     var wheelStepIndex1 = sievePrime1.wheelStepIndex;
 
     while (currentSieveIndex0 < sieveWindow and currentSieveIndex1 < sieveWindow) {
-        const step0 = wheelPattern0[wheelStepIndex0];
-        const step1 = wheelPattern1[wheelStepIndex1];
-
+        const step0 = &wheelPattern0[wheelStepIndex0];
         sieve[currentSieveIndex0] &= step0.bitMask;
-        sieve[currentSieveIndex1] &= step1.bitMask;
-
         currentSieveIndex0 += initialSieveIndex0 * step0.divMultiplicator + step0.residueAddend;
-        currentSieveIndex1 += initialSieveIndex1 * step1.divMultiplicator + step1.residueAddend;
-
         wheelStepIndex0 +%= 1;
+        const step1 = &wheelPattern1[wheelStepIndex1];
+        sieve[currentSieveIndex1] &= step1.bitMask;
+        currentSieveIndex1 += initialSieveIndex1 * step1.divMultiplicator + step1.residueAddend;
         wheelStepIndex1 +%= 1;
     }
 
     while (currentSieveIndex0 < sieveWindow) {
         const step0 = wheelPattern0[wheelStepIndex0];
-
         sieve[currentSieveIndex0] &= step0.bitMask;
         currentSieveIndex0 += initialSieveIndex0 * step0.divMultiplicator + step0.residueAddend;
-
         wheelStepIndex0 +%= 1;
     }
     sievePrime0.currentSieveIndex = currentSieveIndex0 + segmentStart;
@@ -273,10 +270,8 @@ fn apply2SievePrimesIntoSegment(
 
     while (currentSieveIndex1 < sieveWindow) {
         const step1 = wheelPattern1[wheelStepIndex1];
-
         sieve[currentSieveIndex1] &= step1.bitMask;
         currentSieveIndex1 += initialSieveIndex1 * step1.divMultiplicator + step1.residueAddend;
-
         wheelStepIndex1 +%= 1;
     }
     sievePrime1.currentSieveIndex = currentSieveIndex1 + segmentStart;

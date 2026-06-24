@@ -197,4 +197,6 @@ test "nth Prime" {
     try std.testing.expectEqual(104_743, nthPrime);
     const tenMillionthPrime = try StreamingSieve.nthPrime(std.testing.allocator, 10_000_000);
     try std.testing.expectEqual(179_424_691, tenMillionthPrime);
+    //const billionthPrime = try StreamingSieve.nthPrime(std.testing.allocator, 1_000_000_000);
+    //try std.testing.expectEqual(22_801_763_513, billionthPrime);
 }
