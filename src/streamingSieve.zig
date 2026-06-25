@@ -113,9 +113,9 @@ pub const StreamingSieve = struct {
                                     }
                                 }
                             }
-                        } else if(2 * prime < SEGMENT_ELEMS * 5) {
+                        } else if (2 * prime < SEGMENT_ELEMS * 5) {
                             try sievePrimes.append(allocator, sievePrime);
-                        }else {
+                        } else {
                             try largeSievePrimes.append(allocator, sievePrime);
                         }
 
@@ -154,55 +154,56 @@ fn applySievePrimeIntoSegment(
 ) void {
     const wheelPattern = &Comptimes.WHEEL_PATTERNS[lsb];
 
-    if (sievePrime.currentSieveIndex < segmentEndExclusive) {
-        const sieveWindow = segmentEndExclusive - segmentStart;
-        const initialSieveIndex = @as(usize, sievePrime.initialSieveIndex);
-        const wheelStepIndex = @as(usize, sievePrime.wheelStepIndex);
-        var currentSieveIndex = sievePrime.currentSieveIndex - segmentStart;
+    const sieveWindow = segmentEndExclusive - segmentStart;
+    const initialSieveIndex = @as(usize, sievePrime.initialSieveIndex);
+    const wheelStepIndex = @as(usize, sievePrime.wheelStepIndex);
+    var currentSieveIndex = sievePrime.currentSieveIndex - segmentStart;
 
-        var concreteStepSizes: [Comptimes.ADMISSIBLE_RESIDUES.count]usize = undefined;
-        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |step| {
-            concreteStepSizes[step] =
-                @as(usize, wheelPattern[step].divMultiplicator) * initialSieveIndex +
-                @as(usize, wheelPattern[step].residueAddend);
-        }
+    var concreteStepSizes: [Comptimes.ADMISSIBLE_RESIDUES.count]usize = undefined;
+    var advanceAfter7: usize = 0;
+    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |step| {
+        const stepAdvance = @as(usize, wheelPattern[step].divMultiplicator) * initialSieveIndex +
+            @as(usize, wheelPattern[step].residueAddend);
+        concreteStepSizes[step] = stepAdvance;
+        advanceAfter7 += stepAdvance;
+    }
+    advanceAfter7 -=
+        @as(usize, wheelPattern[Comptimes.ADMISSIBLE_RESIDUES.count - 1].divMultiplicator) * initialSieveIndex +
+        @as(usize, wheelPattern[Comptimes.ADMISSIBLE_RESIDUES.count - 1].residueAddend);
 
-        if (wheelStepIndex > 0) {
-            inline for (1..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
-                if (wheelStepIndex <= ri) {
-                    if (currentSieveIndex < sieveWindow) {
-                        sieve[currentSieveIndex] &= wheelPattern[ri].bitMask;
-                        currentSieveIndex += concreteStepSizes[ri];
-                    } else {
-                        sievePrime.currentSieveIndex = currentSieveIndex + segmentStart;
-                        sievePrime.wheelStepIndex = ri;
-                        return;
-                    }
+    if (wheelStepIndex > 0) {
+        inline for (1..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
+            if (wheelStepIndex <= ri) {
+                if (currentSieveIndex < sieveWindow) {
+                    sieve[currentSieveIndex] &= wheelPattern[ri].bitMask;
+                    currentSieveIndex += concreteStepSizes[ri];
+                } else {
+                    sievePrime.currentSieveIndex = currentSieveIndex + segmentStart;
+                    sievePrime.wheelStepIndex = ri;
+                    return;
                 }
             }
         }
+    }
 
-        var advanceAfter7: usize = 0;
-        inline for (concreteStepSizes[0 .. Comptimes.ADMISSIBLE_RESIDUES.count - 1]) |step| {
-            advanceAfter7 += step;
+    while (currentSieveIndex + advanceAfter7 < sieveWindow) {
+        inline for (0.., wheelPattern) |si, wheelStep| {
+            sieve[currentSieveIndex] &= wheelStep.bitMask;
+            currentSieveIndex += concreteStepSizes[si];
         }
-        while (currentSieveIndex + advanceAfter7 < sieveWindow) {
-            inline for (0.., wheelPattern) |si, wheelStep| {
-                sieve[currentSieveIndex] &= wheelStep.bitMask;
-                currentSieveIndex += concreteStepSizes[si];
-            }
-        }
+    }
 
-        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
-            if (currentSieveIndex < sieveWindow) {
-                sieve[currentSieveIndex] &= wheelPattern[ri].bitMask;
-                currentSieveIndex += concreteStepSizes[ri];
-            } else {
-                sievePrime.currentSieveIndex = currentSieveIndex + segmentStart;
-                sievePrime.wheelStepIndex = ri;
-                return;
-            }
+    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
+        if (currentSieveIndex < sieveWindow) {
+            sieve[currentSieveIndex] &= wheelPattern[ri].bitMask;
+            currentSieveIndex += concreteStepSizes[ri];
+        } else {
+            sievePrime.currentSieveIndex = currentSieveIndex + segmentStart;
+            sievePrime.wheelStepIndex = ri;
+            return;
         }
+    } else {
+        unreachable;
     }
 }
 
@@ -274,17 +275,15 @@ fn applyNSievePrimesIntoSegment(
     }
 
     // Fast path: all n primes still have room in this segment.
-    outer: while (true) {
-        inline for (0..n) |i| {
-            if (currentSieveIndex[i] >= sieveWindow) break :outer;
-        }
-
+    var allWithinSegment = true;
+    while (allWithinSegment) {
         inline for (0..n) |i| {
             const step = &wheelPattern[i][wheelStepIndex[i]];
             sieve[currentSieveIndex[i]] &= step.bitMask;
             currentSieveIndex[i] += initialSieveIndex[i] * @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend);
             wheelStepIndex[i] += 1;
             wheelStepIndex[i] %= Comptimes.ADMISSIBLE_RESIDUES.count;
+            allWithinSegment &= currentSieveIndex[i] < sieveWindow;
         }
     }
 
