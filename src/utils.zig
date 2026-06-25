@@ -32,3 +32,20 @@ pub fn lsb(n: Types.SIEVE_TYPE) Types.SIEVE_TYPE_SHIFT_TYPE {
 pub fn isMultipleOfWheelPrime(n: Types.PRIME_TYPE) bool {
     return !Comptimes.ADMISSIBLE_RESIDUES.check[n%Comptimes.WHEEL_CIRCUMFERENCE];
 }
+
+pub fn sievePrimeFrom(sieveIndex: usize, inByteIndex: u3) Types.SievePrime {
+    const prime = admissibleNumberFromBitIndex(8 * sieveIndex + inByteIndex);
+    const primeSquareBit = admissibleNumberToBit(prime * prime);
+    const primeSquareSieve = primeSquareBit / 8;
+
+    const previousPrimeSquareMultipleMod = prime % Comptimes.WHEEL_CIRCUMFERENCE;
+    const previousPrimeSquareWheelStepIndex =
+        Comptimes.ADMISSIBLE_RESIDUES.reverseMap[previousPrimeSquareMultipleMod];
+
+    return Types.SievePrime{
+        .currentSieveIndex = primeSquareSieve,
+        .initialSieveIndex = @intCast(sieveIndex),
+        .initialInByteIndex = inByteIndex,
+        .wheelStepIndex = @intCast(previousPrimeSquareWheelStepIndex),
+    };
+}

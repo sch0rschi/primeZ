@@ -4,7 +4,6 @@ const config = @import("primeZConfig");
 const Estimates = @import("estimates.zig");
 const Comptimes = @import("comptimes.zig");
 const Utils = @import("utils.zig");
-const Check = @import("primeCheck.zig");
 const Types = @import("types.zig");
 
 const ALIGNMENT = std.mem.Alignment.@"8";
@@ -87,33 +86,19 @@ pub const StreamingSieve = struct {
                 for (segmentStart..@min(rootSieveLimitExclusive, segmentEnd)) |sieveIndex| {
                     var word = sieve[sieveIndex];
                     while (word != 0) {
-                        const lsb: u3 = Utils.lsb(word);
+                        const inByteIndex: u3 = Utils.lsb(word);
+                        const sievePrime= Utils.sievePrimeFrom(sieveIndex, inByteIndex);
 
-                        const prime = Utils.admissibleNumberFromBitIndex(8 * sieveIndex + lsb);
-                        const primeSquareBit = Utils.admissibleNumberToBit(prime * prime);
-                        const primeSquareSieve = primeSquareBit / 8;
-
-                        const previousPrimeSquareMultipleMod = prime % Comptimes.WHEEL_CIRCUMFERENCE;
-                        const previousPrimeSquareWheelStepIndex =
-                            Comptimes.ADMISSIBLE_RESIDUES.reverseMap[previousPrimeSquareMultipleMod];
-
-                        const sievePrime = Types.SievePrime{
-                            .currentSieveIndex = primeSquareSieve,
-                            .initialSieveIndex = @intCast(sieveIndex),
-                            .initialInByteIndex = lsb,
-                            .wheelStepIndex = @intCast(previousPrimeSquareWheelStepIndex),
-                        };
-
-                        if (prime <= SEGMENT_ELEMS / 2) { // the square of large primes must not fall in the same segment
+                        if (15 * sieveIndex * 8 <= SEGMENT_ELEMS) { // the square of large primes must not fall in the same segment
                             inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
-                                if (ri == lsb) {
+                                if (ri == inByteIndex) {
                                     try smallSievePrimesMap[ri].append(allocator, sievePrime);
-                                    if (primeSquareSieve < segmentEnd) {
+                                    if (sievePrime.currentSieveIndex < segmentEnd) {
                                         applySievePrimeIntoSegment(sieve, segmentStart, segmentEnd, &smallSievePrimesMap[ri].items[smallSievePrimesMap[ri].items.len - 1], ri);
                                     }
                                 }
                             }
-                        } else if (2 * prime < SEGMENT_ELEMS * 5) {
+                        } else if (3 * sieveIndex < 2 * SEGMENT_ELEMS) {
                             try sievePrimes.append(allocator, sievePrime);
                         } else {
                             try largeSievePrimes.append(allocator, sievePrime);
