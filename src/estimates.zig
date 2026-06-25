@@ -1,4 +1,5 @@
 const std = @import("std");
+const Types = @import("types.zig");
 
 pub fn primeCountUpperBound(n: u64) u64 {
     if (n < 2) return 0;
@@ -21,9 +22,9 @@ pub fn primeCountUpperBound(n: u64) u64 {
     return @as(u64, @intFromFloat(@ceil(est)));
 }
 
-pub fn nthPrimeUpperBound(n: u64) u64 {
+pub fn nthPrimeUpperBound(n: usize) Types.PRIME_TYPE {
     if (n < 6) {
-        const small = [_]u64{ 2, 3, 5, 7, 11 };
+        const small = [_]Types.PRIME_TYPE{ 2, 3, 5, 7, 11 };
         return small[n];
     }
 
@@ -33,5 +34,5 @@ pub fn nthPrimeUpperBound(n: u64) u64 {
 
     const est = nf * (ln + lnln);
 
-    return @as(u64, @ceil(est));
+    return @as(Types.PRIME_TYPE, @ceil(est));
 }
