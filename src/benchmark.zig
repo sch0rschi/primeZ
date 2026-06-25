@@ -2,6 +2,7 @@ const std = @import("std");
 
 const StreamingSieve = @import("streamingSieve.zig").StreamingSieve;
 
+const LIMIT = 10_000_000_000;
 
 // Rust primal
 // 100:         541             5.25 µs
@@ -18,7 +19,13 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
     var limit: usize = 100;
-    while (limit <= 10_000_000_000) {
+    while (limit <= LIMIT / 100) {
+        _ = try StreamingSieve.nthPrime(allocator, limit-1);
+        limit *= 10;
+    }
+
+    limit = 100;
+    while (limit <= LIMIT) {
         const t0 = std.Io.Clock.now(.awake, io);
         const nthPrime = try StreamingSieve.nthPrime(allocator, limit-1);
         const t1 = std.Io.Clock.now(.awake, io);
