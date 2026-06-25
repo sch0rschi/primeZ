@@ -8,6 +8,7 @@ const Types = @import("types.zig");
 
 const ALIGNMENT = std.mem.Alignment.@"8";
 const SEGMENT_ELEMS: usize = 1024 * config.l1_cache_size;
+const BATCH_SIZE: usize = config.general_purpose_register_count / 5;
 
 pub const StreamingSieve = struct {
     pub fn nthPrime(allocator: std.mem.Allocator, nth: usize) !Types.PRIME_TYPE {
@@ -79,7 +80,7 @@ pub const StreamingSieve = struct {
                 }
             }
 
-            applyLargeSievePrimesBatch(6, sieve, segmentStart, segmentEnd, &sievePrimes, &sievePrimesActiveCount);
+            applyLargeSievePrimesBatch(BATCH_SIZE, sieve, segmentStart, segmentEnd, &sievePrimes, &sievePrimesActiveCount);
             applyLargeSievePrimesBatch(2, sieve, segmentStart, segmentEnd, &largeSievePrimes, &largeSievePrimesActiveCount);
 
             if (segmentStart < rootSieveLimitExclusive) {
