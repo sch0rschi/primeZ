@@ -25,8 +25,8 @@ pub const StreamingSieve = struct {
             @min(SEGMENT_ELEMS, sieveLength),
         );
         defer allocator.free(sieve);
-        const bytes = std.mem.sliceAsBytes(sieve);
-        const words = std.mem.bytesAsSlice(u64, bytes);
+        const bytes: []align(8) u8 = std.mem.sliceAsBytes(sieve);
+        const words: []align(8) u64 = std.mem.bytesAsSlice(u64, bytes);
 
         @memset(sieve, std.math.maxInt(Types.SIEVE_TYPE));
         sieve[0] = Comptimes.FIRST_PRIME_SIEVE_ELEMENT;
@@ -34,7 +34,7 @@ pub const StreamingSieve = struct {
         const rootPrime = std.math.sqrt(upperBound);
         const rootSieveLimitExclusive = Utils.getSieveLength(rootPrime);
         var segmentStart: usize = 0;
-        var segmentEnd: usize = @min(SEGMENT_ELEMS, sieveLength);
+        var segmentEndExclusive: usize = @min(SEGMENT_ELEMS, sieveLength);
 
         var primeCount: usize = 2;
 
@@ -45,71 +45,29 @@ pub const StreamingSieve = struct {
         defer for (&smallSievePrimesMap) |*smallSievePrimes| {
             smallSievePrimes.deinit(allocator);
         };
-        var smallSievePrimesActiveCounts: [Comptimes.ADMISSIBLE_RESIDUES.count]usize =
-            .{0} ** Comptimes.ADMISSIBLE_RESIDUES.count;
+        var smallSievePrimesActiveCounts: [Comptimes.ADMISSIBLE_RESIDUES.count]usize = .{0} ** Comptimes.ADMISSIBLE_RESIDUES.count;
 
-        var largeSievePrimes: std.ArrayList(Types.SievePrime) =
-            try std.ArrayList(Types.SievePrime).initCapacity(allocator, 0);
+        var largeSievePrimes: std.ArrayList(Types.SievePrime) = try std.ArrayList(Types.SievePrime).initCapacity(allocator, 0);
         defer largeSievePrimes.deinit(allocator);
         var largeSievePrimesActiveCount: usize = 0;
 
-        var sievePrimes: std.ArrayList(Types.SievePrime) =
-            try std.ArrayList(Types.SievePrime).initCapacity(allocator, 0);
+        var sievePrimes: std.ArrayList(Types.SievePrime) = try std.ArrayList(Types.SievePrime).initCapacity(allocator, 0);
         defer sievePrimes.deinit(allocator);
         var sievePrimesActiveCount: usize = 0;
 
         while (segmentStart < sieveLength) : ({
             segmentStart += SEGMENT_ELEMS;
-            segmentEnd = @min(segmentStart + SEGMENT_ELEMS, sieveLength);
+            segmentEndExclusive = @min(segmentStart + SEGMENT_ELEMS, sieveLength);
             @memset(sieve, std.math.maxInt(Types.SIEVE_TYPE));
         }) {
-            inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
-                const smallSievePrimes = smallSievePrimesMap[ri];
-                for (smallSievePrimes.items[0..smallSievePrimesActiveCounts[ri]]) |*activeSmallSievePrime| {
-                    if (activeSmallSievePrime.currentSieveIndex < segmentEnd) {
-                        applySievePrimeIntoSegment(sieve, segmentStart, segmentEnd, activeSmallSievePrime, ri);
-                    }
-                }
-                for (smallSievePrimes.items[smallSievePrimesActiveCounts[ri]..]) |*inactiveSmallSievePrime| {
-                    if (inactiveSmallSievePrime.currentSieveIndex < segmentEnd) {
-                        applySievePrimeIntoSegment(sieve, segmentStart, segmentEnd, inactiveSmallSievePrime, ri);
-                        smallSievePrimesActiveCounts[ri] += 1;
-                    } else {
-                        break;
-                    }
-                }
-            }
-
-            applyLargeSievePrimesBatch(BATCH_SIZE, sieve, segmentStart, segmentEnd, &sievePrimes, &sievePrimesActiveCount);
-            applyLargeSievePrimesBatch(2, sieve, segmentStart, segmentEnd, &largeSievePrimes, &largeSievePrimesActiveCount);
+            applySmallSievePrimes(sieve, segmentStart, segmentEndExclusive, &smallSievePrimesMap, &smallSievePrimesActiveCounts);
+            applyLargeSievePrimesBatch(BATCH_SIZE, sieve, segmentStart, segmentEndExclusive, sievePrimes, &sievePrimesActiveCount);
+            applyLargeSievePrimesBatch(2, sieve, segmentStart, segmentEndExclusive, largeSievePrimes, &largeSievePrimesActiveCount);
 
             if (segmentStart < rootSieveLimitExclusive) {
-                for (segmentStart..@min(rootSieveLimitExclusive, segmentEnd)) |sieveIndex| {
-                    var word = sieve[sieveIndex];
-                    while (word != 0) {
-                        const inByteIndex: u3 = Utils.lsb(word);
-                        const sievePrime= Utils.sievePrimeFrom(sieveIndex, inByteIndex);
-
-                        if (15 * sieveIndex * 8 <= SEGMENT_ELEMS) { // the square of large primes must not fall in the same segment
-                            inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
-                                if (ri == inByteIndex) {
-                                    try smallSievePrimesMap[ri].append(allocator, sievePrime);
-                                    if (sievePrime.currentSieveIndex < segmentEnd) {
-                                        applySievePrimeIntoSegment(sieve, segmentStart, segmentEnd, &smallSievePrimesMap[ri].items[smallSievePrimesMap[ri].items.len - 1], ri);
-                                    }
-                                }
-                            }
-                        } else if (3 * sieveIndex < 2 * SEGMENT_ELEMS) {
-                            try sievePrimes.append(allocator, sievePrime);
-                        } else {
-                            try largeSievePrimes.append(allocator, sievePrime);
-                        }
-
-                        word &= word - 1;
-                    }
-                }
+                try findSievePrimesInSegment(allocator, sieve, segmentStart, segmentEndExclusive, rootSieveLimitExclusive, &smallSievePrimesMap, &sievePrimes, &largeSievePrimes);
             }
-            for (segmentStart / 8..segmentEnd / 8) |sieveIndex| {
+            for (segmentStart / 8..segmentEndExclusive / 8) |sieveIndex| {
                 primeCount += @popCount(words[sieveIndex % (SEGMENT_ELEMS / 8)]);
                 if (primeCount >= nth) {
                     primeCount -= @popCount(words[sieveIndex % (SEGMENT_ELEMS / 8)]);
@@ -131,7 +89,26 @@ pub const StreamingSieve = struct {
     }
 };
 
-fn applySievePrimeIntoSegment(
+fn applySmallSievePrimes(sieve: []Types.SIEVE_TYPE, segmentStart: usize, segmentEndExclusive: usize, smallSievePrimesMap: *[Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(Types.SievePrime), smallSievePrimesActiveCounts: *[8]usize) void {
+    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
+        const smallSievePrimes = smallSievePrimesMap[ri];
+        for (smallSievePrimes.items[0..smallSievePrimesActiveCounts[ri]]) |*activeSmallSievePrime| {
+            if (activeSmallSievePrime.currentSieveIndex < segmentEndExclusive) {
+                applySievePrimeIntoSegment(sieve, segmentStart, segmentEndExclusive, activeSmallSievePrime, ri);
+            }
+        }
+        for (smallSievePrimes.items[smallSievePrimesActiveCounts[ri]..]) |*inactiveSmallSievePrime| {
+            if (inactiveSmallSievePrime.currentSieveIndex < segmentEndExclusive) {
+                applySievePrimeIntoSegment(sieve, segmentStart, segmentEndExclusive, inactiveSmallSievePrime, ri);
+                smallSievePrimesActiveCounts[ri] += 1;
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+inline fn applySievePrimeIntoSegment(
     sieve: []Types.SIEVE_TYPE,
     segmentStart: usize,
     segmentEndExclusive: usize,
@@ -193,12 +170,12 @@ fn applySievePrimeIntoSegment(
     }
 }
 
-inline fn applyLargeSievePrimesBatch(
+fn applyLargeSievePrimesBatch(
     comptime n: usize,
     sieve: []Types.SIEVE_TYPE,
     segmentStart: usize,
     segmentEnd: usize,
-    largeSievePrimes: *std.ArrayList(Types.SievePrime),
+    largeSievePrimes: std.ArrayList(Types.SievePrime),
     largeSievePrimesActiveCount: *usize,
 ) void {
     var ready: [n]*Types.SievePrime = undefined;
@@ -239,7 +216,7 @@ inline fn applyLargeSievePrimesBatch(
     }
 }
 
-fn applyNSievePrimesIntoSegment(
+inline fn applyNSievePrimesIntoSegment(
     comptime n: usize,
     sieve: []Types.SIEVE_TYPE,
     segmentStart: usize,
@@ -284,5 +261,41 @@ fn applyNSievePrimesIntoSegment(
         }
         sievePrimes[i].currentSieveIndex = currentSieveIndex[i] + segmentStart;
         sievePrimes[i].wheelStepIndex = @intCast(wheelStepIndex[i]);
+    }
+}
+
+fn findSievePrimesInSegment(
+    allocator: std.mem.Allocator,
+    sieve: []Types.SIEVE_TYPE,
+    segmentStart: usize,
+    segmentEndExclusive: usize,
+    rootSieveLimitExclusive: usize,
+    smallSievePrimesMap: *[Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(Types.SievePrime),
+    sievePrimes: *std.ArrayList(Types.SievePrime),
+    largeSievePrimes: *std.ArrayList(Types.SievePrime),
+) !void {
+    for (segmentStart..@min(rootSieveLimitExclusive, segmentEndExclusive)) |sieveIndex| {
+        var word = sieve[sieveIndex];
+        while (word != 0) {
+            const inByteIndex: u3 = Utils.lsb(word);
+            const sievePrime = Utils.sievePrimeFrom(sieveIndex, inByteIndex);
+
+            if (15 * sieveIndex * 8 <= SEGMENT_ELEMS) { // the square of large primes must not fall in the same segment
+                inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
+                    if (ri == inByteIndex) {
+                        try smallSievePrimesMap[ri].append(allocator, sievePrime);
+                        if (sievePrime.currentSieveIndex < segmentEndExclusive) {
+                            applySievePrimeIntoSegment(sieve, segmentStart, segmentEndExclusive, &smallSievePrimesMap[ri].items[smallSievePrimesMap[ri].items.len - 1], ri);
+                        }
+                    }
+                }
+            } else if (3 * sieveIndex < 2 * SEGMENT_ELEMS) {
+                try sievePrimes.append(allocator, sievePrime);
+            } else {
+                try largeSievePrimes.append(allocator, sievePrime);
+            }
+
+            word &= word - 1;
+        }
     }
 }
