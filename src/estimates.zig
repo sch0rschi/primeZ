@@ -1,7 +1,7 @@
 const std = @import("std");
 const Types = @import("types.zig");
 
-pub fn primeCountUpperBound(n: u64) u64 {
+pub fn primeCountUpperBound(n: Types.PRIME_TYPE) u64 {
     if (n < 2) return 0;
 
     const small = [_]u64{ 0, 0, 1, 2, 2, 3, 3, 4, 4, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 8, 8 };

@@ -16,43 +16,116 @@ const Segment = struct {
     words: []align(8) u64,
 };
 
-pub const StreamingSieve = struct {
-    pub fn nthPrime(allocator: std.mem.Allocator, nth: usize) !Types.PRIME_TYPE {
-        if (nth < Comptimes.WHEEL_PRIMES.len) {
-            return Comptimes.WHEEL_PRIMES[nth];
-        }
+/// Computes the nth prime, zero indexed.
+/// nthPrime(0) = 2.
+/// nthPrime(1) = 3.
+pub fn nthPrime(allocator: std.mem.Allocator, nth: usize) !Types.PRIME_TYPE {
+    if (nth < Comptimes.WHEEL_PRIMES.len) {
+        return Comptimes.WHEEL_PRIMES[nth];
+    }
 
-        const upperBound = Estimates.nthPrimeUpperBound(nth);
+    const nthPrimeUpperBound = Estimates.nthPrimeUpperBound(nth);
 
-        var iter = try SegmentIterator.init(allocator, upperBound);
-        defer iter.deinit();
+    var segmentIterator = try SegmentIterator.init(allocator, nthPrimeUpperBound);
+    defer segmentIterator.deinit();
 
-        var primeCount: usize = 2;
+    var primeCount: usize = 2;
 
-        while (try iter.next()) |segment| {
-            for (segment.wordStart..segment.wordEndExclusive) |sieveIndex| {
-                const wordIndex = sieveIndex % (SEGMENT_ELEMS / 8);
-                primeCount += @popCount(segment.words[wordIndex]);
-                if (primeCount >= nth) {
-                    primeCount -= @popCount(segment.words[wordIndex]);
-                    var word: u64 = segment.words[wordIndex];
-                    while (word != 0) {
-                        const lsb: u6 = @as(u6, @intCast(@ctz(word)));
-
-                        primeCount += 1;
-                        if (primeCount == nth) {
-                            return Utils.admissibleNumberFromBitIndex(8 * 8 * sieveIndex + lsb);
-                        }
-
-                        word &= word - 1;
-                    }
+    while (try segmentIterator.next()) |segment| {
+        for (segment.wordStart..segment.wordEndExclusive, segment.words) |wordIndex, word| {
+            const primesInWordCount = @popCount(word);
+            if (primeCount + primesInWordCount < nth) {
+                primeCount += primesInWordCount;
+            } else {
+                var workingWord: u64 = word;
+                for (0..nth - primeCount - 1) |_| { // removes all smaller primes from word
+                    workingWord &= workingWord - 1;
                 }
+                const inWordIndex: u6 = @intCast(@ctz(workingWord));
+                return Utils.admissibleNumberFromBitIndex(64 * wordIndex + inWordIndex);
             }
         }
-
-        unreachable;
     }
-};
+
+    unreachable;
+}
+
+/// get all primes with values at most limit.
+/// The array is to be freed by the caller.
+pub fn getPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) ![]Types.PRIME_TYPE {
+    if (limit < 2) {
+        return try allocator.alloc(Types.PRIME_TYPE, 0);
+    } else if (limit < 3) {
+        const primes = try allocator.alloc(Types.PRIME_TYPE, 1);
+        @memcpy(primes, Comptimes.WHEEL_PRIMES[0..1]);
+        return primes;
+    } else if (limit < 5) {
+        const primes = try allocator.alloc(Types.PRIME_TYPE, 2);
+        @memcpy(primes, Comptimes.WHEEL_PRIMES[0..2]);
+        return primes;
+    } else if (limit < 7) {
+        const primes = try allocator.alloc(Types.PRIME_TYPE, 3);
+        @memcpy(primes, Comptimes.WHEEL_PRIMES[0..3]);
+        return primes;
+    }
+    const amountUpperBound = Estimates.primeCountUpperBound(limit);
+    var primes = try std.ArrayList(Types.PRIME_TYPE).initCapacity(allocator, amountUpperBound);
+    try primes.appendSlice(allocator, &Comptimes.WHEEL_PRIMES);
+
+    var segmentIterator = try SegmentIterator.init(allocator, limit);
+    defer segmentIterator.deinit();
+
+    outer: while (try segmentIterator.next()) |segment| {
+        for (segment.wordStart..segment.wordEndExclusive, segment.words) |wordIndex, word| {
+            var workingWord: u64 = word;
+            while (workingWord > 0) {
+                const inWordIndex: u6 = @intCast(@ctz(workingWord));
+                const prime = Utils.admissibleNumberFromBitIndex(64 * wordIndex + inWordIndex);
+                if (prime > limit) {
+                    break :outer;
+                }
+                try primes.append(allocator, prime);
+                workingWord &= workingWord - 1;
+            }
+        }
+    }
+
+    return try primes.toOwnedSlice(allocator);
+}
+
+/// Sums all primes with values at most limit.
+pub fn sumPrimesLimit(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Types.PRIME_TYPE {
+    if (limit < 2) {
+        return 0;
+    } else if (limit < 3) {
+        return 2;
+    } else if (limit < 5) {
+        return 5;
+    } else if (limit < 7) {
+        return 10;
+    }
+    var sum: Types.PRIME_TYPE = 10; // 2 + 3 + 5
+
+    var segmentIterator = try SegmentIterator.init(allocator, limit);
+    defer segmentIterator.deinit();
+
+    outer: while (try segmentIterator.next()) |segment| {
+        for (segment.wordStart..segment.wordEndExclusive, segment.words) |wordIndex, word| {
+            var workingWord: u64 = word;
+            while (workingWord > 0) {
+                const inWordIndex: u6 = @intCast(@ctz(workingWord));
+                const prime = Utils.admissibleNumberFromBitIndex(64 * wordIndex + inWordIndex);
+                if (prime > limit) {
+                    break :outer;
+                }
+                sum += prime;
+                workingWord &= workingWord - 1;
+            }
+        }
+    }
+
+    return sum;
+}
 
 const SegmentIterator = struct {
     allocator: std.mem.Allocator,
@@ -76,8 +149,8 @@ const SegmentIterator = struct {
     sievePrimes: std.ArrayList(Types.SievePrime),
     sievePrimesActiveCount: usize,
 
-    pub fn init(allocator: std.mem.Allocator, upperBound: usize) !SegmentIterator {
-        const sieveLength = ALIGNMENT.forward(Utils.getSieveLength(upperBound));
+    pub fn init(allocator: std.mem.Allocator, upperBoundInclusive: usize) !SegmentIterator {
+        const sieveLength = ALIGNMENT.forward(Utils.getSieveLength(upperBoundInclusive));
         const sieve = try allocator.alignedAlloc(
             Types.SIEVE_TYPE,
             ALIGNMENT,
@@ -90,7 +163,7 @@ const SegmentIterator = struct {
         @memset(sieve, std.math.maxInt(Types.SIEVE_TYPE));
         sieve[0] = Comptimes.FIRST_PRIME_SIEVE_ELEMENT;
 
-        const rootPrime = std.math.sqrt(upperBound);
+        const rootPrime = std.math.sqrt(upperBoundInclusive);
         const rootSieveLimitExclusive = Utils.getSieveLength(rootPrime);
 
         var smallSievePrimesMap: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(Types.SievePrime) = undefined;
@@ -131,8 +204,8 @@ const SegmentIterator = struct {
         self.sievePrimes.deinit(self.allocator);
     }
 
-    /// Computes the next segment in place and returns a view over it, or
-    /// `null` once the whole sieve range has been produced.
+    /// Computes the next segment and returns a view over it,
+    /// or `null` once the sieve range has been reached.
     pub fn next(self: *SegmentIterator) !?Segment {
         if (self.segmentStart >= self.sieveLength) {
             return null;
@@ -172,13 +245,13 @@ const SegmentIterator = struct {
 
                 if (15 * sieveIndex * 8 <= SEGMENT_ELEMS) { // the square of large primes must not fall in the same segment
                     inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ri| {
-                    if (ri == inByteIndex) {
-                        try self.smallSievePrimesMap[ri].append(self.allocator, sievePrime);
-                        if (sievePrime.currentSieveIndex < self.segmentEndExclusive) {
-                            applySievePrimeIntoSegment(self.sieve, self.segmentStart, self.segmentEndExclusive, &self.smallSievePrimesMap[ri].items[self.smallSievePrimesMap[ri].items.len - 1], ri);
+                        if (ri == inByteIndex) {
+                            try self.smallSievePrimesMap[ri].append(self.allocator, sievePrime);
+                            if (sievePrime.currentSieveIndex < self.segmentEndExclusive) {
+                                applySievePrimeIntoSegment(self.sieve, self.segmentStart, self.segmentEndExclusive, &self.smallSievePrimesMap[ri].items[self.smallSievePrimesMap[ri].items.len - 1], ri);
+                            }
                         }
                     }
-                }
                 } else if (3 * sieveIndex < 2 * SEGMENT_ELEMS) {
                     try self.sievePrimes.append(self.allocator, sievePrime);
                 } else {
@@ -276,7 +349,7 @@ const SegmentIterator = struct {
             advanceAfter7 += stepAdvance;
         }
         advanceAfter7 -=
-        @as(usize, wheelPattern[Comptimes.ADMISSIBLE_RESIDUES.count - 1].divMultiplicator) * initialSieveIndex +
+            @as(usize, wheelPattern[Comptimes.ADMISSIBLE_RESIDUES.count - 1].divMultiplicator) * initialSieveIndex +
             @as(usize, wheelPattern[Comptimes.ADMISSIBLE_RESIDUES.count - 1].residueAddend);
 
         if (wheelStepIndex > 0) {

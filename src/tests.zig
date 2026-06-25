@@ -3,7 +3,7 @@ const std = @import("std");
 const Comptimes = @import("comptimes.zig");
 const Check = @import("primeCheck.zig");
 const Utils = @import("utils.zig");
-const StreamingSieve = @import("streamingSieve.zig").StreamingSieve;
+const IteratingSieve = @import("iteratingSieve.zig");
 
 test "Comptime WHEEL_CIRCUMFERENCE" {
     try std.testing.expectEqual(30, Comptimes.WHEEL_CIRCUMFERENCE);
@@ -53,20 +53,20 @@ test "Comptime GAP_PATTERN" {
 }
 
 test "nth Prime" {
-    const firstPrime = try StreamingSieve.nthPrime(std.testing.allocator, 0);
+    const firstPrime = try IteratingSieve.nthPrime(std.testing.allocator, 0);
     try std.testing.expectEqual(2, firstPrime);
-    const secondPrime = try StreamingSieve.nthPrime(std.testing.allocator, 1);
+    const secondPrime = try IteratingSieve.nthPrime(std.testing.allocator, 1);
     try std.testing.expectEqual(3, secondPrime);
-    const thirdPrime = try StreamingSieve.nthPrime(std.testing.allocator, 2);
+    const thirdPrime = try IteratingSieve.nthPrime(std.testing.allocator, 2);
     try std.testing.expectEqual(5, thirdPrime);
-    const fourthPrime = try StreamingSieve.nthPrime(std.testing.allocator, 3);
+    const fourthPrime = try IteratingSieve.nthPrime(std.testing.allocator, 3);
     try std.testing.expectEqual(7, fourthPrime);
-    const nthPrime = try StreamingSieve.nthPrime(std.testing.allocator, 10_000);
+    const nthPrime = try IteratingSieve.nthPrime(std.testing.allocator, 10_000);
     try std.testing.expectEqual(104_743, nthPrime);
-    const tenMillionthPrime = try StreamingSieve.nthPrime(std.testing.allocator, 10_000_000);
+    const tenMillionthPrime = try IteratingSieve.nthPrime(std.testing.allocator, 10_000_000);
     try std.testing.expectEqual(179_424_691, tenMillionthPrime);
-    const hundredMillionthPrime = try StreamingSieve.nthPrime(std.testing.allocator, 100_000_000);
+    const hundredMillionthPrime = try IteratingSieve.nthPrime(std.testing.allocator, 100_000_000);
     try std.testing.expectEqual(2_038_074_751, hundredMillionthPrime);
-    //const billionthPrime = try StreamingSieve.nthPrime(std.testing.allocator, 1_000_000_000);
+    //const billionthPrime = try IteratingSieve.nthPrime(std.testing.allocator, 1_000_000_000);
     //try std.testing.expectEqual(22_801_763_513, billionthPrime);
 }
