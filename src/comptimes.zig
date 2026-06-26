@@ -6,8 +6,6 @@ const Types = @import("types.zig");
 
 pub const WHEEL_PRIMES = [_]Types.PRIME_TYPE{ 2, 3, 5 };
 
-pub const LARGEST_WHEEL_PRIME = WHEEL_PRIMES[WHEEL_PRIMES.len - 1];
-
 pub const WHEEL_CIRCUMFERENCE = computeWheelCircumference();
 
 const ADMISSIBLE_RESIDUES_COUNT: comptime_int = computeAdmissibleResiduesCount();
@@ -23,15 +21,7 @@ pub const ADMISSIBLE_RESIDUES: AdmissibleResidues = buildAdmissibleResidues();
 
 pub const FIRST_PRIME_SIEVE_ELEMENT: Types.SIEVE_TYPE = buildFirstPrimeSieveElement();
 
-pub const FIRST_PRIMES_COUNT: usize = @popCount(FIRST_PRIME_SIEVE_ELEMENT);
-
-pub const FIRST_PRIMES: [FIRST_PRIMES_COUNT]Types.PRIME_TYPE = buildFirstPrimes();
-
-pub const GAP_PATTERN: [ADMISSIBLE_RESIDUES.count]usize = buildGapPattern();
-
 pub const WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Types.WheelStep = buildWheelPatterns();
-
-pub const CUMULATIVE_WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Types.WheelStep = buildCumulativeWheelPatterns();
 
 fn computeWheelCircumference() usize {
     var product = 1;
@@ -68,30 +58,6 @@ fn buildFirstPrimeSieveElement() Types.SIEVE_TYPE {
     }
 
     return firstPrimesSieveElement;
-}
-
-fn buildFirstPrimes() [FIRST_PRIMES_COUNT]Types.PRIME_TYPE {
-    var firstPrimes: [FIRST_PRIMES_COUNT]Types.PRIME_TYPE = undefined;
-    var firstPrimesCount = 0;
-    var firstPrimesSieveElement = FIRST_PRIME_SIEVE_ELEMENT;
-    while (firstPrimesSieveElement > 0) {
-        const lsb = Utils.lsb(firstPrimesSieveElement);
-        firstPrimes[firstPrimesCount] = Utils.admissibleNumberFromBitIndex(lsb);
-        firstPrimesCount += 1;
-        firstPrimesSieveElement &= firstPrimesSieveElement - 1;
-    }
-    return firstPrimes;
-}
-
-fn buildGapPattern() [ADMISSIBLE_RESIDUES.count]usize {
-    var gapPattern: [ADMISSIBLE_RESIDUES.count]usize = undefined;
-    for (0..ADMISSIBLE_RESIDUES.count) |i| {
-        const nextIndex = @mod(i + 1, ADMISSIBLE_RESIDUES.count);
-        const difference: isize = @as(isize, ADMISSIBLE_RESIDUES.list[nextIndex]) - @as(isize, ADMISSIBLE_RESIDUES.list[i]);
-        const gap = @mod(difference, WHEEL_CIRCUMFERENCE);
-        gapPattern[i] = @as(usize, gap);
-    }
-    return gapPattern;
 }
 
 fn buildAdmissibleResidues() AdmissibleResidues {
@@ -146,17 +112,4 @@ fn buildWheelPatterns() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Ty
     }
 
     return wheelPatterns;
-}
-
-fn buildCumulativeWheelPatterns() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Types.WheelStep {
-    var cumulativeWheelPatterns = WHEEL_PATTERNS;
-
-    for (&cumulativeWheelPatterns) |*cumulativeWheelPattern| {
-        for (cumulativeWheelPattern[0..cumulativeWheelPattern.len-1], cumulativeWheelPattern[1..]) |*previous, *actual| {
-            actual.divMultiplicator += previous.divMultiplicator;
-            actual.residueAddend += previous.residueAddend;
-        }
-    }
-
-    return cumulativeWheelPatterns;
 }

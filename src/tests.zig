@@ -41,17 +41,6 @@ test "Comptime ADMISSIBLE_RESIDUES" {
     }
 }
 
-test "Comptime GAP_PATTERN" {
-    const expectedGapPattern: [Comptimes.ADMISSIBLE_RESIDUES.count]usize = .{ 6, 4, 2, 4, 2, 4, 6, 2 };
-    var actualGapPattern: [Comptimes.ADMISSIBLE_RESIDUES.count]usize = undefined;
-    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |i| {
-        actualGapPattern[i] = Comptimes.GAP_PATTERN[i];
-    }
-    for (expectedGapPattern, actualGapPattern) |e, a| {
-        try std.testing.expectEqual(e, a);
-    }
-}
-
 test "nth Prime" {
     const firstPrime = try IteratingSieve.nthPrime(std.testing.allocator, 0);
     try std.testing.expectEqual(2, firstPrime);
