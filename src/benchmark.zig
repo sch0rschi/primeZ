@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const IteratingSieve = @import("iteratingSieve.zig");
+const Primes = @import("primes.zig");
 
 const LIMIT = 10_000_000_000;
 
@@ -20,14 +20,14 @@ pub fn main(init: std.process.Init) !void {
 
     var limit: usize = 100;
     while (limit <= LIMIT / 100) {
-        _ = try IteratingSieve.nthPrime(allocator, limit-1);
+        _ = try Primes.nthPrime(allocator, limit-1);
         limit *= 10;
     }
 
     limit = 100;
     while (limit <= LIMIT) {
         const t0 = std.Io.Clock.now(.awake, io);
-        const nthPrime = try IteratingSieve.nthPrime(allocator, limit-1);
+        const nthPrime = try Primes.nthPrime(allocator, limit-1);
         const t1 = std.Io.Clock.now(.awake, io);
 
         const duration = try formatDuration(allocator, t0.durationTo(t1).toNanoseconds());

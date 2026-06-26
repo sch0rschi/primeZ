@@ -3,7 +3,7 @@ const std = @import("std");
 const Comptimes = @import("comptimes.zig");
 const Check = @import("primeCheck.zig");
 const Utils = @import("utils.zig");
-const IteratingSieve = @import("iteratingSieve.zig");
+const Primes = @import("primes.zig");
 const Estimates = @import("estimates.zig");
 
 test "Comptime WHEEL_CIRCUMFERENCE" {
@@ -43,31 +43,31 @@ test "Comptime ADMISSIBLE_RESIDUES" {
 }
 
 test "nth Prime" {
-    const firstPrime = try IteratingSieve.nthPrime(std.testing.allocator, 0);
+    const firstPrime = try Primes.nthPrime(std.testing.allocator, 0);
     try std.testing.expectEqual(2, firstPrime);
-    const secondPrime = try IteratingSieve.nthPrime(std.testing.allocator, 1);
+    const secondPrime = try Primes.nthPrime(std.testing.allocator, 1);
     try std.testing.expectEqual(3, secondPrime);
-    const thirdPrime = try IteratingSieve.nthPrime(std.testing.allocator, 2);
+    const thirdPrime = try Primes.nthPrime(std.testing.allocator, 2);
     try std.testing.expectEqual(5, thirdPrime);
-    const fourthPrime = try IteratingSieve.nthPrime(std.testing.allocator, 3);
+    const fourthPrime = try Primes.nthPrime(std.testing.allocator, 3);
     try std.testing.expectEqual(7, fourthPrime);
-    const nthPrime = try IteratingSieve.nthPrime(std.testing.allocator, 10_000);
+    const nthPrime = try Primes.nthPrime(std.testing.allocator, 10_000);
     try std.testing.expectEqual(104_743, nthPrime);
-    const tenMillionthPrime = try IteratingSieve.nthPrime(std.testing.allocator, 10_000_000);
+    const tenMillionthPrime = try Primes.nthPrime(std.testing.allocator, 10_000_000);
     try std.testing.expectEqual(179_424_691, tenMillionthPrime);
-    const hundredMillionthPrime = try IteratingSieve.nthPrime(std.testing.allocator, 100_000_000);
+    const hundredMillionthPrime = try Primes.nthPrime(std.testing.allocator, 100_000_000);
     try std.testing.expectEqual(2_038_074_751, hundredMillionthPrime);
 }
 
 test "getPrimes" {
     const allocator = std.testing.allocator;
 
-    const primesUpTo1 = try IteratingSieve.getPrimes(std.testing.allocator, 1);
+    const primesUpTo1 = try Primes.getPrimes(std.testing.allocator, 1);
     defer allocator.free(primesUpTo1);
 
     try std.testing.expectEqual(0, primesUpTo1.len);
 
-    const primes = try IteratingSieve.getPrimes(std.testing.allocator, Estimates.nthPrimeUpperBound(10_000_000));
+    const primes = try Primes.getPrimes(std.testing.allocator, Estimates.nthPrimeUpperBound(10_000_000));
     defer allocator.free(primes);
 
     try std.testing.expectEqual(2, primes[0]);
@@ -78,18 +78,18 @@ test "getPrimes" {
     try std.testing.expectEqual(179_424_691, primes[10_000_000]);
 }
 
-test "sumPrimesLimit" {
-    const sum1 = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 1);
+test "sumPrimes" {
+    const sum1 = try Primes.sumPrimes(std.testing.allocator, 1);
     try std.testing.expectEqual(0, sum1);
-    const sum5 = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 5);
+    const sum5 = try Primes.sumPrimes(std.testing.allocator, 5);
     try std.testing.expectEqual(10, sum5);
-    const sum6 = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 6);
+    const sum6 = try Primes.sumPrimes(std.testing.allocator, 6);
     try std.testing.expectEqual(10, sum6);
-    const sum7 = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 7);
+    const sum7 = try Primes.sumPrimes(std.testing.allocator, 7);
     try std.testing.expectEqual(17, sum7);
-    const sum8 = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 8);
+    const sum8 = try Primes.sumPrimes(std.testing.allocator, 8);
     try std.testing.expectEqual(17, sum8);
-    const sumTwoMillion = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 2_000_000);
+    const sumTwoMillion = try Primes.sumPrimes(std.testing.allocator, 2_000_000);
     try std.testing.expectEqual(142913828922, sumTwoMillion);
 }
 

@@ -9,7 +9,7 @@ pub fn admissibleNumberFromBitIndex(bitIndex: usize) usize {
     return fullWheels * Comptimes.WHEEL_CIRCUMFERENCE + Comptimes.ADMISSIBLE_RESIDUES.list[rem];
 }
 
-pub fn admissibleNumberToBit(number: usize) usize {
+pub fn admissibleNumberToBitIndex(number: usize) usize {
     const div = number / Comptimes.WHEEL_CIRCUMFERENCE;
     const mod = number % Comptimes.WHEEL_CIRCUMFERENCE;
     std.debug.assert(Comptimes.ADMISSIBLE_RESIDUES.check[mod]);
@@ -18,34 +18,18 @@ pub fn admissibleNumberToBit(number: usize) usize {
 }
 
 pub fn getSieveLength(limitInclusive: usize) usize {
-    return divCeil(limitInclusive * @sizeOf(Types.SIEVE_TYPE), Comptimes.WHEEL_CIRCUMFERENCE);
+    return divCeil(limitInclusive * @sizeOf(Types.SIEVE_BUCKET_TYPE), Comptimes.WHEEL_CIRCUMFERENCE);
 }
 
 pub fn divCeil(a: usize, b: usize) usize {
     return (a + b - 1) / b;
 }
 
-pub fn lsb(n: Types.SIEVE_TYPE) Types.SIEVE_TYPE_SHIFT_TYPE {
+/// Returns the index of the least significant set bit in a bucket.
+pub fn lsb(n: Types.SIEVE_BUCKET_TYPE) Types.SIEVE_TYPE_SHIFT_TYPE {
     return @as(Types.SIEVE_TYPE_SHIFT_TYPE, @intCast(@ctz(n)));
 }
 
 pub fn isMultipleOfWheelPrime(n: Types.PRIME_TYPE) bool {
     return !Comptimes.ADMISSIBLE_RESIDUES.check[n%Comptimes.WHEEL_CIRCUMFERENCE];
-}
-
-pub fn sievePrimeFrom(sieveIndex: usize, inByteIndex: u3) Types.SievePrime {
-    const prime = admissibleNumberFromBitIndex(8 * sieveIndex + inByteIndex);
-    const primeSquareBit = admissibleNumberToBit(prime * prime);
-    const primeSquareSieve = primeSquareBit / 8;
-
-    const previousPrimeSquareMultipleMod = prime % Comptimes.WHEEL_CIRCUMFERENCE;
-    const previousPrimeSquareWheelStepIndex =
-        Comptimes.ADMISSIBLE_RESIDUES.reverseMap[previousPrimeSquareMultipleMod];
-
-    return Types.SievePrime{
-        .currentSieveIndex = primeSquareSieve,
-        .initialSieveIndex = @intCast(sieveIndex),
-        .initialInByteIndex = inByteIndex,
-        .wheelStepIndex = @intCast(previousPrimeSquareWheelStepIndex),
-    };
 }

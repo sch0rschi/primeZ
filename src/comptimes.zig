@@ -19,9 +19,16 @@ pub const AdmissibleResidues = struct {
 
 pub const ADMISSIBLE_RESIDUES: AdmissibleResidues = buildAdmissibleResidues();
 
-pub const FIRST_PRIME_SIEVE_ELEMENT: Types.SIEVE_TYPE = buildFirstPrimeSieveElement();
+pub const FIRST_BUCKET: Types.SIEVE_BUCKET_TYPE = buildFirstPrimeSieveElement();
 
-pub const WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Types.WheelStep = buildWheelPatterns();
+pub const WheelStep = struct {
+    bitMask: u8,
+    divMultiplicator: u8,
+    residueAddend: u8,
+    _padding: u8 = 0,
+};
+
+pub const WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep = buildWheelPatterns();
 
 fn computeWheelCircumference() usize {
     var product = 1;
@@ -41,7 +48,7 @@ fn computeAdmissibleResiduesCount() usize {
     return count;
 }
 
-fn buildFirstPrimeSieveElement() Types.SIEVE_TYPE {
+fn buildFirstPrimeSieveElement() Types.SIEVE_BUCKET_TYPE {
     var firstPrimesSieveElement = 0;
     var admissibleResiduesCount: Types.SIEVE_TYPE_SHIFT_TYPE = 0;
     var pp = 1;
@@ -50,7 +57,7 @@ fn buildFirstPrimeSieveElement() Types.SIEVE_TYPE {
             if (Check.isPrime(pp)) {
                 firstPrimesSieveElement |= 1 << admissibleResiduesCount;
             }
-            if (admissibleResiduesCount == @bitSizeOf(Types.SIEVE_TYPE) - 1) {
+            if (admissibleResiduesCount == @bitSizeOf(Types.SIEVE_BUCKET_TYPE) - 1) {
                 break;
             }
             admissibleResiduesCount += 1;
@@ -88,8 +95,8 @@ fn buildAdmissibleResidues() AdmissibleResidues {
     };
 }
 
-fn buildWheelPatterns() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Types.WheelStep {
-    var wheelPatterns: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Types.WheelStep = undefined;
+fn buildWheelPatterns() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep {
+    var wheelPatterns: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep = undefined;
 
     for (ADMISSIBLE_RESIDUES.list, &wheelPatterns) |ar, *wp| {
         var number = ar;
@@ -103,10 +110,9 @@ fn buildWheelPatterns() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]Ty
                 steps += 1;
             }
             step.* = .{
-                .bitMask = ~@as(Types.SIEVE_TYPE, 1 << ADMISSIBLE_RESIDUES.reverseMap[startNumber % WHEEL_CIRCUMFERENCE]),
+                .bitMask = ~@as(Types.SIEVE_BUCKET_TYPE, 1 << ADMISSIBLE_RESIDUES.reverseMap[startNumber % WHEEL_CIRCUMFERENCE]),
                 .divMultiplicator = steps,
                 .residueAddend = (number / WHEEL_CIRCUMFERENCE) - (startNumber / WHEEL_CIRCUMFERENCE),
-                .dummy = 0,
             };
         }
     }

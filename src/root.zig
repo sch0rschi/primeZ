@@ -1,3 +1,3 @@
-pub const IteratingSieve = @import("iteratingSieve.zig");
+pub const Primes = @import("primes.zig");
 pub const PrimeCheck = @import("primeCheck.zig");
-pub const Estimates = @import("estimates.zig");
+pub const PrimeEstimates = @import("estimates.zig");

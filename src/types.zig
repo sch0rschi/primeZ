@@ -2,26 +2,14 @@ const std = @import("std");
 
 pub const PRIME_TYPE = usize;
 
-pub const SIEVE_TYPE = u8;
+pub const SIEVE_BUCKET_TYPE = u8;
 
-pub const SIEVE_TYPE_FULL_MASK = std.math.maxInt(SIEVE_TYPE);
+pub const SIEVE_BUCKETS_TYPE = []align(8) SIEVE_BUCKET_TYPE;
 
-pub const SIEVE_TYPE_SHIFT_TYPE = std.math.Log2Int(SIEVE_TYPE);
+pub const SIEVE_CONTAINER_TYPE = u64;
 
-pub const WheelStep = struct {
-    bitMask: u8,
-    divMultiplicator: u8,
-    residueAddend: u8,
-    dummy: u8,
-};
+pub const SIEVE_CONTAINERS_TYPE = []align(8) SIEVE_CONTAINER_TYPE;
 
-pub const SievePrime = struct {
-    currentSieveIndex: usize,
-    initialSieveIndex: u32,
-    initialInByteIndex: u3,
-    wheelStepIndex: u3,
-};
+pub const SIEVE_TYPE_FULL_MASK = std.math.maxInt(SIEVE_BUCKET_TYPE);
 
-comptime {
-    std.debug.assert(@sizeOf(SievePrime) == 16);
-}
+pub const SIEVE_TYPE_SHIFT_TYPE = std.math.Log2Int(SIEVE_BUCKET_TYPE);
