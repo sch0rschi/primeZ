@@ -4,6 +4,7 @@ const Comptimes = @import("comptimes.zig");
 const Check = @import("primeCheck.zig");
 const Utils = @import("utils.zig");
 const IteratingSieve = @import("iteratingSieve.zig");
+const Estimates = @import("estimates.zig");
 
 test "Comptime WHEEL_CIRCUMFERENCE" {
     try std.testing.expectEqual(30, Comptimes.WHEEL_CIRCUMFERENCE);
@@ -56,6 +57,39 @@ test "nth Prime" {
     try std.testing.expectEqual(179_424_691, tenMillionthPrime);
     const hundredMillionthPrime = try IteratingSieve.nthPrime(std.testing.allocator, 100_000_000);
     try std.testing.expectEqual(2_038_074_751, hundredMillionthPrime);
-    //const billionthPrime = try IteratingSieve.nthPrime(std.testing.allocator, 1_000_000_000);
-    //try std.testing.expectEqual(22_801_763_513, billionthPrime);
 }
+
+test "getPrimes" {
+    const allocator = std.testing.allocator;
+
+    const primesUpTo1 = try IteratingSieve.getPrimes(std.testing.allocator, 1);
+    defer allocator.free(primesUpTo1);
+
+    try std.testing.expectEqual(0, primesUpTo1.len);
+
+    const primes = try IteratingSieve.getPrimes(std.testing.allocator, Estimates.nthPrimeUpperBound(10_000_000));
+    defer allocator.free(primes);
+
+    try std.testing.expectEqual(2, primes[0]);
+    try std.testing.expectEqual(3, primes[1]);
+    try std.testing.expectEqual(5, primes[2]);
+    try std.testing.expectEqual(7, primes[3]);
+    try std.testing.expectEqual(104_743, primes[10_000]);
+    try std.testing.expectEqual(179_424_691, primes[10_000_000]);
+}
+
+test "sumPrimesLimit" {
+    const sum1 = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 1);
+    try std.testing.expectEqual(0, sum1);
+    const sum5 = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 5);
+    try std.testing.expectEqual(10, sum5);
+    const sum6 = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 6);
+    try std.testing.expectEqual(10, sum6);
+    const sum7 = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 7);
+    try std.testing.expectEqual(17, sum7);
+    const sum8 = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 8);
+    try std.testing.expectEqual(17, sum8);
+    const sumTwoMillion = try IteratingSieve.sumPrimesLimit(std.testing.allocator, 2_000_000);
+    try std.testing.expectEqual(142913828922, sumTwoMillion);
+}
+

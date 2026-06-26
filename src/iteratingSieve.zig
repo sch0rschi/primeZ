@@ -32,7 +32,7 @@ pub fn nthPrime(allocator: std.mem.Allocator, nth: usize) !Types.PRIME_TYPE {
     var primeCount: usize = 2;
 
     while (try segmentIterator.next()) |segment| {
-        for (segment.wordStart..segment.wordEndExclusive, segment.words) |wordIndex, word| {
+        for (segment.wordStart..segment.wordEndExclusive, segment.words[0..segment.wordEndExclusive-segment.wordStart]) |wordIndex, word| {
             const primesInWordCount = @popCount(word);
             if (primeCount + primesInWordCount < nth) {
                 primeCount += primesInWordCount;
@@ -76,7 +76,7 @@ pub fn getPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) ![]Types
     defer segmentIterator.deinit();
 
     outer: while (try segmentIterator.next()) |segment| {
-        for (segment.wordStart..segment.wordEndExclusive, segment.words) |wordIndex, word| {
+        for (segment.wordStart..segment.wordEndExclusive, segment.words[0..segment.wordEndExclusive-segment.wordStart]) |wordIndex, word| {
             var workingWord: u64 = word;
             while (workingWord > 0) {
                 const inWordIndex: u6 = @intCast(@ctz(workingWord));
@@ -110,7 +110,7 @@ pub fn sumPrimesLimit(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Ty
     defer segmentIterator.deinit();
 
     outer: while (try segmentIterator.next()) |segment| {
-        for (segment.wordStart..segment.wordEndExclusive, segment.words) |wordIndex, word| {
+        for (segment.wordStart..segment.wordEndExclusive, segment.words[0..segment.wordEndExclusive-segment.wordStart]) |wordIndex, word| {
             var workingWord: u64 = word;
             while (workingWord > 0) {
                 const inWordIndex: u6 = @intCast(@ctz(workingWord));
