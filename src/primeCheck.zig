@@ -1,18 +1,20 @@
 const std = @import("std");
 
+const Types = @import("types.zig");
+
 const WHEEL_THRESHOLD: usize = 10_000_000_000;
 
-pub fn isPrime(n: usize) bool {
-    if (n < 2) return false;
-    if (n == 2 or n == 3 or n == 5) return true;
-    if (n % 2 == 0 or n % 3 == 0 or n % 5 == 0) return false;
-    if (n < WHEEL_THRESHOLD) {
-        return wheelPrimeCheck(n);
+pub fn isPrime(maybePrime: Types.PRIME_TYPE) bool {
+    if (maybePrime < 2) return false;
+    if (maybePrime == 2 or maybePrime == 3 or maybePrime == 5) return true;
+    if (maybePrime % 2 == 0 or maybePrime % 3 == 0 or maybePrime % 5 == 0) return false;
+    if (maybePrime < WHEEL_THRESHOLD) {
+        return wheelPrimeCheck(maybePrime);
     }
-    return isPrimeMillerRabin(n);
+    return isPrimeMillerRabin(maybePrime);
 }
 
-fn wheelPrimeCheck(n: usize) bool {
+fn wheelPrimeCheck(maybePrime: Types.PRIME_TYPE) bool {
     const offsets = [_]usize{ 7, 11, 13, 17, 19, 23, 29, 31 };
 
     var base: usize = 0;
@@ -21,14 +23,14 @@ fn wheelPrimeCheck(n: usize) bool {
         for (offsets) |o| {
             const x = base + o;
 
-            if (x > n / x) return true;
-            if (n % x == 0) return false;
+            if (x > maybePrime / x) return true;
+            if (maybePrime % x == 0) return false;
         }
 
         base += 30;
 
         // safe stopping condition (prevents division-by-zero entirely)
-        if (base > n / 7) break;
+        if (base > maybePrime / 7) break;
     }
 
     return true;

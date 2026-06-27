@@ -61,8 +61,8 @@ pub const SegmentIterator = struct {
     largeSievePrimes: std.ArrayList(SievePrime),
     largeSievePrimesActiveCount: usize,
 
-    pub fn init(allocator: std.mem.Allocator, primeInclusive: usize) !SegmentIterator {
-        const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(primeInclusive));
+    pub fn init(allocator: std.mem.Allocator, lowerLimitInclusive: usize) !SegmentIterator {
+        const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(lowerLimitInclusive));
         const buckets = try allocator.alignedAlloc(
             Types.SIEVE_BUCKET_TYPE,
             ALIGNMENT,
@@ -74,7 +74,7 @@ pub const SegmentIterator = struct {
         @memset(buckets, std.math.maxInt(Types.SIEVE_BUCKET_TYPE));
         buckets[0] = Comptimes.FIRST_BUCKET;
 
-        const rootPrime = std.math.sqrt(primeInclusive);
+        const rootPrime = std.math.sqrt(lowerLimitInclusive);
         const rootBucketExclusive = Utils.getSieveLength(rootPrime);
 
         var smallSievePrimesMap: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(SievePrime) = undefined;

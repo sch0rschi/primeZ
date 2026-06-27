@@ -5,6 +5,7 @@ const Check = @import("primeCheck.zig");
 const Utils = @import("utils.zig");
 const Primes = @import("primes.zig");
 const Estimates = @import("estimates.zig");
+const PrimeStore = @import("primeStore.zig").PrimeStore;
 
 test "Comptime WHEEL_CIRCUMFERENCE" {
     try std.testing.expectEqual(30, Comptimes.WHEEL_CIRCUMFERENCE);
@@ -93,3 +94,19 @@ test "sumPrimes" {
     try std.testing.expectEqual(142913828922, sumTwoMillion);
 }
 
+test "Sieve with primes" {
+    var primeStore = try PrimeStore.init(std.testing.allocator, 10_000);
+    defer primeStore.deinit();
+
+    var failCount: u8 = 0;
+    for (0..10_000) |n| {
+        if (Check.isPrime(n) != primeStore.isPrime(n)) {
+            std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, Check.isPrime(n), primeStore.isPrime(n) });
+            failCount += 1;
+            if (failCount >= 10) {
+                break;
+            }
+        }
+    }
+    try std.testing.expectEqual(0, failCount);
+}
