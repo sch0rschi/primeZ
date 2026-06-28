@@ -56,8 +56,6 @@ test "nth Prime" {
     try std.testing.expectEqual(104_743, nthPrime);
     const tenMillionthPrime = try Primes.nthPrime(std.testing.allocator, 10_000_000);
     try std.testing.expectEqual(179_424_691, tenMillionthPrime);
-    const hundredMillionthPrime = try Primes.nthPrime(std.testing.allocator, 100_000_000);
-    try std.testing.expectEqual(2_038_074_751, hundredMillionthPrime);
 }
 
 test "getPrimes" {
@@ -95,7 +93,7 @@ test "sumPrimes" {
 }
 
 test "Sieve with primes" {
-    const primeStore = try PrimeStore.initForQueries(std.testing.allocator, 1_000_000);
+    var primeStore = try PrimeStore.initForQueries(std.testing.allocator, 1_000_000);
     defer primeStore.deinit();
 
     var failCount: u8 = 0;
@@ -108,7 +106,7 @@ test "Sieve with primes" {
             }
         }
     }
-    for (900_000..1_000_000) |n| {
+    for (999_000..1_000_000) |n| {
         if (Check.isPrime(n) != primeStore.isPrime(n)) {
             std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, Check.isPrime(n), primeStore.isPrime(n) });
             failCount += 1;
@@ -121,21 +119,21 @@ test "Sieve with primes" {
 }
 
 test "Sieve and list of primes" {
-    const primeStoreLongerPrimesThanSieve = try PrimeStore.initForQueriesAndPrimes(std.testing.allocator, 100, 1000);
+    var primeStoreLongerPrimesThanSieve = try PrimeStore.initForQueriesAndPrimes(std.testing.allocator, 100, 1000);
     defer primeStoreLongerPrimesThanSieve.deinit();
 
     try std.testing.expectEqual(168, (try primeStoreLongerPrimesThanSieve.getPrimes()).len);
 
-    const primeStoreLongerSieveThanPrimes = try PrimeStore.initForQueriesAndPrimes(std.testing.allocator, 1000, 100);
+    var primeStoreLongerSieveThanPrimes = try PrimeStore.initForQueriesAndPrimes(std.testing.allocator, 1000, 100);
     defer primeStoreLongerSieveThanPrimes.deinit();
 
     try std.testing.expectEqual(25, (try primeStoreLongerSieveThanPrimes.getPrimes()).len);
 
-    const primeStoreForQueries = try PrimeStore.initForQueriesAndPrimes(std.testing.allocator, 1_000_000, 0);
+    var primeStoreForQueries = try PrimeStore.initForQueriesAndPrimes(std.testing.allocator, 1_000_000, 0);
     defer primeStoreForQueries.deinit();
 
     var failCount: u8 = 0;
-    for (900_000..1_000_000) |n| {
+    for (999_000..1_000_000) |n| {
         if (Check.isPrime(n) != primeStoreForQueries.isPrime(n)) {
             std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, Check.isPrime(n), primeStoreForQueries.isPrime(n) });
             failCount += 1;

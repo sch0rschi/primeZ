@@ -13,7 +13,7 @@ pub const PrimeStore = struct {
     allocator: std.mem.Allocator,
     buckets: Types.SIEVE_BUCKETS_TYPE,
     upperBoundQuery: Types.PRIME_TYPE,
-    primes: ?[]Types.PRIME_TYPE,
+    primes: ?[]Types.PRIME_TYPE = null,
 
     /// Initializes a prime store that yiu can query (.isPrime(n), ... TODO).
     /// It is guaranteed, that the number lowerLimitInclusive is included in the prime store for fast querying.
@@ -31,7 +31,6 @@ pub const PrimeStore = struct {
             .allocator = allocator,
             .buckets = buckets,
             .upperBoundQuery = buckets.len * Comptimes.WHEEL_CIRCUMFERENCE,
-            .primes = undefined,
         };
     }
 
@@ -76,11 +75,13 @@ pub const PrimeStore = struct {
         };
     }
 
-    pub fn deinit(self: PrimeStore) void {
+    pub fn deinit(self: *PrimeStore) void {
         self.allocator.free(self.buckets);
         if (self.primes) |primes| {
             self.allocator.free(primes);
         }
+        self.primes = undefined;
+        self.* = undefined;
     }
 
     pub fn isPrime(self: PrimeStore, maybePrime: Types.PRIME_TYPE) bool {

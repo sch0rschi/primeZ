@@ -113,6 +113,7 @@ pub const SegmentIterator = struct {
         }
         self.largeSievePrimes.deinit(self.allocator);
         self.sievePrimes.deinit(self.allocator);
+        self.* = undefined;
     }
 
     /// Computes the next segment and returns a view over it,
