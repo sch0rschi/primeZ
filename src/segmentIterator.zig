@@ -194,22 +194,22 @@ pub const SegmentIterator = struct {
     }
 
     fn applyLargeSievePrimesBatch(
-        comptime n: usize,
+        comptime batchSize: usize,
         buckets: Types.SIEVE_BUCKETS_TYPE,
         bucketsStart: usize,
         bucketsEndExclusive: usize,
         largeSievePrimes: std.ArrayList(SievePrime),
         largeSievePrimesActiveCount: *usize,
     ) void {
-        var readySievePrimes: [n]*SievePrime = undefined;
+        var readySievePrimes: [batchSize]*SievePrime = undefined;
         var readySievePrimesCount: usize = 0;
 
         for (largeSievePrimes.items[0..largeSievePrimesActiveCount.*]) |*activeSievePrime| {
             if (activeSievePrime.currentBucketIndex < bucketsEndExclusive) {
                 readySievePrimes[readySievePrimesCount] = activeSievePrime;
                 readySievePrimesCount += 1;
-                if (readySievePrimesCount == n) {
-                    applyNSievePrimesIntoSegment(n, buckets, bucketsStart, bucketsEndExclusive, &readySievePrimes);
+                if (readySievePrimesCount == batchSize) {
+                    applyNSievePrimesIntoSegment(batchSize, buckets, bucketsStart, bucketsEndExclusive, &readySievePrimes);
                     readySievePrimesCount = 0;
                 }
             }
@@ -220,8 +220,8 @@ pub const SegmentIterator = struct {
                 readySievePrimes[readySievePrimesCount] = inactiveSievePrime;
                 readySievePrimesCount += 1;
                 largeSievePrimesActiveCount.* += 1;
-                if (readySievePrimesCount == n) {
-                    applyNSievePrimesIntoSegment(n, buckets, bucketsStart, bucketsEndExclusive, &readySievePrimes);
+                if (readySievePrimesCount == batchSize) {
+                    applyNSievePrimesIntoSegment(batchSize, buckets, bucketsStart, bucketsEndExclusive, &readySievePrimes);
                     readySievePrimesCount = 0;
                 }
             } else {
@@ -230,7 +230,7 @@ pub const SegmentIterator = struct {
         }
 
         if (readySievePrimesCount > 0) { // Leftover 1..n-1 primes: fall back to smaller batch.
-            inline for (0..BATCH_SIZE) |leftoverCount| {
+            inline for (0..batchSize) |leftoverCount| {
                 if (leftoverCount == readySievePrimesCount) {
                     applyNSievePrimesIntoSegment(leftoverCount, buckets, bucketsStart, bucketsEndExclusive, readySievePrimes[0..leftoverCount]);
                     break;
