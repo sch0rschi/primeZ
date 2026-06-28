@@ -95,7 +95,7 @@ test "sumPrimes" {
 }
 
 test "Sieve with primes" {
-    var primeStore = try PrimeStore.init(std.testing.allocator, 10_000);
+    var primeStore = try PrimeStore.initForQueries(std.testing.allocator, 10_000);
     defer primeStore.deinit();
 
     var failCount: u8 = 0;
@@ -109,4 +109,16 @@ test "Sieve with primes" {
         }
     }
     try std.testing.expectEqual(0, failCount);
+}
+
+test "Sieve and list of primes" {
+    var primeStoreLongerPrimesThanSieve = try PrimeStore.initForQueriesAndPrimes(std.testing.allocator, 100, 1000);
+
+    try std.testing.expectEqual(168, (try primeStoreLongerPrimesThanSieve.getPrimes()).len);
+    primeStoreLongerPrimesThanSieve.deinit();
+
+    var primeStoreLongerSieveThanPrimes = try PrimeStore.initForQueriesAndPrimes(std.testing.allocator, 1000, 100);
+    defer primeStoreLongerSieveThanPrimes.deinit();
+
+    try std.testing.expectEqual(25, (try primeStoreLongerSieveThanPrimes.getPrimes()).len);
 }
