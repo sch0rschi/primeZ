@@ -144,3 +144,19 @@ test "Sieve and list of primes" {
     }
     try std.testing.expectEqual(0, failCount);
 }
+
+test "oeis A014233 strong pseudoprimes" {
+    const A014233 = [_]u64{
+        2047,
+        1373653,
+        25326001,
+        3215031751,
+        2152302898747,
+        3474749660383,
+        341550071728321,
+        3825123056546413051,
+    };
+    for (A014233) |p| {
+        try std.testing.expect(!Check.isPrime(p));
+    }
+}
