@@ -85,15 +85,16 @@ pub const PrimeStore = struct {
     }
 
     pub fn isPrime(self: PrimeStore, maybePrime: Types.PRIME_TYPE) bool {
-        if (maybePrime == 2 or maybePrime == 3 or maybePrime == 5) {
-            return true;
-        }
+        if (maybePrime < 2) return false;
+        if (maybePrime == 2 or maybePrime == 3 or maybePrime == 5) return true;
+        if (maybePrime % 2 == 0 or maybePrime % 3 == 0 or maybePrime % 5 == 0) return false;
+
         if (maybePrime > self.upperBoundQuery) {
             return PrimeCheck.isPrime(maybePrime);
         }
+
         const bucketDiv = maybePrime / Comptimes.WHEEL_CIRCUMFERENCE;
         const bucketMod = maybePrime % Comptimes.WHEEL_CIRCUMFERENCE;
-        if (!Comptimes.ADMISSIBLE_RESIDUES.check[bucketMod]) return false;
         return self.buckets[bucketDiv] >>
             @as(u3, @intCast(Comptimes.ADMISSIBLE_RESIDUES.reverseMap[bucketMod])) & 1 != 0;
     }
