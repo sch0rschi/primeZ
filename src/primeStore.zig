@@ -50,8 +50,9 @@ pub const PrimeStore = struct {
         var segmentIterator = try SegmentIterator.init(allocator, @max(queryLowerLimitInclusive, primesLimitInclusive));
         defer segmentIterator.deinit();
         outer: while (try segmentIterator.next()) |segment| {
-            if (bucketsLength < segment.containerEndExclusive) {
-                @memcpy(containers[segment.containerStart..segment.containerEndExclusive], segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]);
+            if (segment.containerStart < containers.len) {
+                const copyLength = @min(segment.containerEndExclusive - segment.containerStart, containers.len - segment.containerStart);
+                @memcpy(containers[segment.containerStart..segment.containerStart + copyLength], segment.containers[0 .. copyLength]);
             }
             for (segment.containerStart..segment.containerEndExclusive, segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]) |containerIndex, container| {
                 var containerWorkingCopy: u64 = container;

@@ -95,11 +95,20 @@ test "sumPrimes" {
 }
 
 test "Sieve with primes" {
-    const primeStore = try PrimeStore.initForQueries(std.testing.allocator, 10_000);
+    const primeStore = try PrimeStore.initForQueries(std.testing.allocator, 1_000_000);
     defer primeStore.deinit();
 
     var failCount: u8 = 0;
     for (0..10_000) |n| {
+        if (Check.isPrime(n) != primeStore.isPrime(n)) {
+            std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, Check.isPrime(n), primeStore.isPrime(n) });
+            failCount += 1;
+            if (failCount >= 10) {
+                break;
+            }
+        }
+    }
+    for (900_000..1_000_000) |n| {
         if (Check.isPrime(n) != primeStore.isPrime(n)) {
             std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, Check.isPrime(n), primeStore.isPrime(n) });
             failCount += 1;
@@ -113,12 +122,27 @@ test "Sieve with primes" {
 
 test "Sieve and list of primes" {
     const primeStoreLongerPrimesThanSieve = try PrimeStore.initForQueriesAndPrimes(std.testing.allocator, 100, 1000);
+    defer primeStoreLongerPrimesThanSieve.deinit();
 
     try std.testing.expectEqual(168, (try primeStoreLongerPrimesThanSieve.getPrimes()).len);
-    primeStoreLongerPrimesThanSieve.deinit();
 
     const primeStoreLongerSieveThanPrimes = try PrimeStore.initForQueriesAndPrimes(std.testing.allocator, 1000, 100);
     defer primeStoreLongerSieveThanPrimes.deinit();
 
     try std.testing.expectEqual(25, (try primeStoreLongerSieveThanPrimes.getPrimes()).len);
+
+    const primeStoreForQueries = try PrimeStore.initForQueriesAndPrimes(std.testing.allocator, 1_000_000, 0);
+    defer primeStoreForQueries.deinit();
+
+    var failCount: u8 = 0;
+    for (900_000..1_000_000) |n| {
+        if (Check.isPrime(n) != primeStoreForQueries.isPrime(n)) {
+            std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, Check.isPrime(n), primeStoreForQueries.isPrime(n) });
+            failCount += 1;
+            if (failCount >= 10) {
+                break;
+            }
+        }
+    }
+    try std.testing.expectEqual(0, failCount);
 }
