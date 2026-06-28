@@ -75,14 +75,14 @@ pub const PrimeStore = struct {
         };
     }
 
-    pub fn deinit(self: *PrimeStore) void {
+    pub fn deinit(self: PrimeStore) void {
         self.allocator.free(self.buckets);
         if (self.primes) |primes| {
             self.allocator.free(primes);
         }
     }
 
-    pub fn isPrime(self: *PrimeStore, maybePrime: Types.PRIME_TYPE) bool {
+    pub fn isPrime(self: PrimeStore, maybePrime: Types.PRIME_TYPE) bool {
         if (maybePrime == 2 or maybePrime == 3 or maybePrime == 5) {
             return true;
         }
@@ -96,7 +96,7 @@ pub const PrimeStore = struct {
             @as(u3, @intCast(Comptimes.ADMISSIBLE_RESIDUES.reverseMap[bucketMod])) & 1 != 0;
     }
 
-    pub fn getPrimes(self: *PrimeStore) ![]Types.PRIME_TYPE {
+    pub fn getPrimes(self: PrimeStore) ![]Types.PRIME_TYPE {
         return self.primes.?;
     }
 };
