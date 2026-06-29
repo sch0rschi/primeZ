@@ -5,6 +5,7 @@ const Comptimes = @import("comptimes.zig");
 const Utils = @import("utils.zig");
 const Types = @import("types.zig");
 const SegmentIterator = @import("segmentIterator.zig").SegmentIterator;
+const Pi = @import("pi.zig");
 
 /// Computes the nth prime, zero indexed.
 /// nthPrime(0) = 2.
@@ -22,7 +23,7 @@ pub fn nthPrime(allocator: std.mem.Allocator, nth: usize) !Types.PRIME_TYPE {
     var primeCount: usize = 2;
 
     while (try segmentIterator.next()) |segment| {
-        for (segment.containerStart..segment.containerEndExclusive, segment.containers[0..segment.containerEndExclusive-segment.containerStart]) |containerIndex, container| {
+        for (segment.containerStart..segment.containerEndExclusive, segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]) |containerIndex, container| {
             const primesInContainerCount = @popCount(container);
             if (primeCount + primesInContainerCount < nth) {
                 primeCount += primesInContainerCount;
@@ -66,7 +67,7 @@ pub fn getPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) ![]Types
     defer segmentIterator.deinit();
 
     outer: while (try segmentIterator.next()) |segment| {
-        for (segment.containerStart..segment.containerEndExclusive, segment.containers[0..segment.containerEndExclusive-segment.containerStart]) |containerIndex, container| {
+        for (segment.containerStart..segment.containerEndExclusive, segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]) |containerIndex, container| {
             var containerWorkingCopy: u64 = container;
             while (containerWorkingCopy > 0) {
                 const inBucketIndex: u6 = @intCast(@ctz(containerWorkingCopy));
@@ -100,7 +101,7 @@ pub fn sumPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Types.P
     defer segmentIterator.deinit();
 
     outer: while (try segmentIterator.next()) |segment| {
-        for (segment.containerStart..segment.containerEndExclusive, segment.containers[0..segment.containerEndExclusive-segment.containerStart]) |containerIndex, container| {
+        for (segment.containerStart..segment.containerEndExclusive, segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]) |containerIndex, container| {
             var containerWorkingCopy: u64 = container;
             while (containerWorkingCopy > 0) {
                 const inBucketIndex: u6 = @intCast(@ctz(containerWorkingCopy));
@@ -115,4 +116,8 @@ pub fn sumPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Types.P
     }
 
     return sum;
+}
+
+pub fn pi(allocator: std.mem.Allocator, x: u64) !usize {
+    return try Pi.pi(allocator, x);
 }

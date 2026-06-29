@@ -20,14 +20,14 @@ pub fn main(init: std.process.Init) !void {
 
     var limit: usize = 100;
     while (limit <= LIMIT / 100) {
-        _ = try Primes.nthPrime(allocator, limit-1);
+        _ = try Primes.pi(allocator, limit);
         limit *= 10;
     }
 
-    limit = 100;
-    while (limit <= LIMIT) {
+    limit = 1;
+    while (limit <= 1) {
         const t0 = std.Io.Clock.now(.awake, io);
-        const nthPrime = try Primes.nthPrime(allocator, limit-1);
+        const nthPrime = try Primes.nthPrime(allocator, 1_000_000_000);
         const t1 = std.Io.Clock.now(.awake, io);
 
         const duration = try formatDuration(allocator, t0.durationTo(t1).toNanoseconds());

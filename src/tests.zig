@@ -160,3 +160,17 @@ test "oeis A014233 strong pseudoprimes" {
         try std.testing.expect(!Check.isPrime(p));
     }
 }
+
+test "Primes.pi small values" {
+    const allocator = std.testing.allocator;
+
+    try std.testing.expectEqual(@as(usize, 0), try Primes.pi(allocator, 0));
+    try std.testing.expectEqual(@as(usize, 0), try Primes.pi(allocator, 1));
+    try std.testing.expectEqual(@as(usize, 1), try Primes.pi(allocator, 2));
+    try std.testing.expectEqual(@as(usize, 2), try Primes.pi(allocator, 3));
+    try std.testing.expectEqual(@as(usize, 4), try Primes.pi(allocator, 10));
+    try std.testing.expectEqual(@as(usize, 25), try Primes.pi(allocator, 100));
+    try std.testing.expectEqual(@as(usize, 168), try Primes.pi(allocator, 1_000));
+    try std.testing.expectEqual(@as(usize, 1229), try Primes.pi(allocator, 10_000));
+    try std.testing.expectEqual(@as(usize, 9592), try Primes.pi(allocator, 100_000));
+}
