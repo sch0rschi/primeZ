@@ -118,6 +118,30 @@ pub fn sumPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Types.P
     return sum;
 }
 
+pub fn piSieveCounting(allocator: std.mem.Allocator, limit: u64) !usize {
+    if (limit < 2) {
+        return 0;
+    } else if (limit < 3) {
+        return 1;
+    } else if (limit < 5) {
+        return 2;
+    } else if (limit < 7) {
+        return 3;
+    }
+    var count: usize = 3;
+
+    var segmentIterator = try SegmentIterator.init(allocator, limit);
+    defer segmentIterator.deinit();
+
+    while (try segmentIterator.next()) |segment| {
+        for (segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]) |container| {
+            count += @popCount(container);
+        }
+    }
+
+    return count;
+}
+
 pub fn pi(allocator: std.mem.Allocator, x: u64) !usize {
     return try Pi.pi(allocator, x);
 }
