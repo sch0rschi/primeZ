@@ -463,7 +463,7 @@ pub const SegmentIterator = struct {
         };
 
         var accumulatedBucketIndexAdvance: [Comptimes.ADMISSIBLE_RESIDUES.count + 1]usize = undefined;
-        for (0..Comptimes.ADMISSIBLE_RESIDUES.count + 1, accumulatedWheelPattern) |stepIndex, accumulatedWheelStep| {
+        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count + 1, accumulatedWheelPattern) |stepIndex, accumulatedWheelStep| {
             accumulatedBucketIndexAdvance[stepIndex] =
                 initialBucketIndex * accumulatedWheelStep.divMultiplicator + accumulatedWheelStep.residueAddend;
         }
@@ -482,13 +482,13 @@ pub const SegmentIterator = struct {
             0..Comptimes.ADMISSIBLE_RESIDUES.count,
             accumulatedBucketIndexAdvance[0..Comptimes.ADMISSIBLE_RESIDUES.count],
             accumulatedWheelPattern[0..Comptimes.ADMISSIBLE_RESIDUES.count],
-        ) |ari, abia, ws| {
+        ) |wsi, abia, ws| {
             if (currentBucketIndex + abia < bucketCount) {
                 buckets[currentBucketIndex + abia] &= ws.bitMask;
             } else {
                 sievePrime.currentBucketIndex = currentBucketIndex + abia + bucketsStart;
-                sievePrime.wheelStepIndex = wheelStepIndex +% @as(u3, ari);
-                mediumSievePrimesMap[(@as(usize, wheelStepIndex) + ari) % @bitSizeOf(Types.SIEVE_BUCKET_TYPE)].appendAssumeCapacity(sievePrime.*);
+                sievePrime.wheelStepIndex = wheelStepIndex +% @as(u3, wsi);
+                mediumSievePrimesMap[(@as(usize, wheelStepIndex) + wsi) % @bitSizeOf(Types.SIEVE_BUCKET_TYPE)].appendAssumeCapacity(sievePrime.*);
                 return;
             }
         } else {
