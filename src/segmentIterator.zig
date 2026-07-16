@@ -397,15 +397,24 @@ pub const SegmentIterator = struct {
             @as(usize, wheelPattern[Comptimes.ADMISSIBLE_RESIDUES.count - 1].residueAddend);
 
         if (wheelStepIndex > 0) {
-            inline for (1..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-                if (wheelStepIndex <= ari) {
-                    if (currentBucketIndex < bucketCount) {
+            if (currentBucketIndex + bucketAdvance7 < bucketCount) {
+                inline for (1..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+                    if (wheelStepIndex <= ari) {
                         buckets[currentBucketIndex] &= wheelPattern[ari].bitMask;
                         currentBucketIndex += concreteBucketAdvance[ari];
-                    } else {
-                        sievePrime.currentBucketIndex = currentBucketIndex + bucketsStart;
-                        sievePrime.wheelStepIndex = ari;
-                        return;
+                    }
+                }
+            } else {
+                inline for (1..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+                    if (wheelStepIndex <= ari) {
+                        if (currentBucketIndex < bucketCount) {
+                            buckets[currentBucketIndex] &= wheelPattern[ari].bitMask;
+                            currentBucketIndex += concreteBucketAdvance[ari];
+                        } else {
+                            sievePrime.currentBucketIndex = currentBucketIndex + bucketsStart;
+                            sievePrime.wheelStepIndex = ari;
+                            return;
+                        }
                     }
                 }
             }
