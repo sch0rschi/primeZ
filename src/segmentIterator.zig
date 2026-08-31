@@ -85,16 +85,11 @@ pub const SegmentIterator = struct {
         }
 
         var mediumSievePrimesMap: [Comptimes.ADMISSIBLE_RESIDUES.count][@bitSizeOf(Types.SIEVE_BUCKET_TYPE)]std.ArrayList(SievePrime) = undefined;
-        for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-            for (0..@bitSizeOf(Types.SIEVE_BUCKET_TYPE)) |wsi| {
-                mediumSievePrimesMap[ari][wsi] = try std.ArrayList(SievePrime).initCapacity(allocator, 0);
-            }
-        }
-
         var mediumSievePrimesMapsSwap: [Comptimes.ADMISSIBLE_RESIDUES.count][@bitSizeOf(Types.SIEVE_BUCKET_TYPE)]std.ArrayList(SievePrime) = undefined;
         for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
             for (0..@bitSizeOf(Types.SIEVE_BUCKET_TYPE)) |wsi| {
-                mediumSievePrimesMapsSwap[ari][wsi] = try std.ArrayList(SievePrime).initCapacity(allocator, 0);
+                mediumSievePrimesMap[ari][wsi] = try std.ArrayList(SievePrime).initCapacity(allocator, 10000);
+                mediumSievePrimesMapsSwap[ari][wsi] = try std.ArrayList(SievePrime).initCapacity(allocator, 10000);
             }
         }
 
@@ -277,7 +272,7 @@ pub const SegmentIterator = struct {
     fn activateMediumSievePrimes(self: *SegmentIterator) !void {
         for (self.mediumSievePrimes.items[self.mediumSievePrimesActiveCount..]) |mediumSievePrime| {
             if (true or mediumSievePrime.currentBucketIndex >= self.bucketsEndExclusive) {
-                try self.mediumSievePrimesMaps[mediumSievePrime.initialInBucketIndex][mediumSievePrime.wheelStepIndex].append(self.allocator, mediumSievePrime);
+                self.mediumSievePrimesMaps[mediumSievePrime.initialInBucketIndex][mediumSievePrime.wheelStepIndex].appendAssumeCapacity(mediumSievePrime);
                 self.mediumSievePrimesActiveCount += 1;
             } else {
                 break;
@@ -296,10 +291,7 @@ pub const SegmentIterator = struct {
                         self.bucketsStart,
                         self.bucketsEndExclusive,
                         mediumSievePrime,
-                    );
-                    try self.mediumSievePrimesMapsSwap[ari][mediumSievePrime.wheelStepIndex].append(
-                        self.allocator,
-                        mediumSievePrime.*,
+                        &self.mediumSievePrimesMapsSwap[ari],
                     );
                 }
                 self.mediumSievePrimesMaps[ari][wsi].clearRetainingCapacity();
@@ -447,18 +439,16 @@ pub const SegmentIterator = struct {
         bucketsStart: usize,
         bucketsEndExclusive: usize,
         sievePrime: *SievePrime,
+        mediumSievePrimesMap: *[@bitSizeOf(Types.SIEVE_BUCKET_TYPE)]std.ArrayList(SievePrime),
     ) void {
         const bucketCount = bucketsEndExclusive - bucketsStart;
         const initialBucketIndex = @as(usize, sievePrime.initialBucketIndex);
         var currentBucketIndex = sievePrime.currentBucketIndex - bucketsStart;
 
         @setEvalBranchQuota(1 << 20);
-        const wheelPattern: [Comptimes.ADMISSIBLE_RESIDUES.count]Comptimes.WheelStep = comptime blk: {
-            var wheelPattern_ = Comptimes.WHEEL_PATTERNS[initialInBucketIndex];
-            std.mem.rotate(Comptimes.WheelStep, wheelPattern_[0..], wheelStepIndex);
-            break :blk wheelPattern_;
-        };
         const accumulatedWheelPattern: [Comptimes.ADMISSIBLE_RESIDUES.count + 1]Comptimes.WheelStep = comptime blk: {
+            var wheelPattern = Comptimes.WHEEL_PATTERNS[initialInBucketIndex];
+            std.mem.rotate(Comptimes.WheelStep, wheelPattern[0..], wheelStepIndex);
             var accumulatedWheelPattern_: [Comptimes.ADMISSIBLE_RESIDUES.count + 1]Comptimes.WheelStep = undefined;
             accumulatedWheelPattern_[0].divMultiplicator = 0;
             accumulatedWheelPattern_[0].residueAddend = 0;
@@ -472,38 +462,33 @@ pub const SegmentIterator = struct {
             break :blk accumulatedWheelPattern_;
         };
 
-        const concreteAccumulatedWheelPattern: [Comptimes.ADMISSIBLE_RESIDUES.count + 1]usize = blk: {
-            var concreteAccumulatedWheelPattern: [Comptimes.ADMISSIBLE_RESIDUES.count + 1]usize = undefined;
-            for (
-                0..Comptimes.ADMISSIBLE_RESIDUES.count + 1,
-                accumulatedWheelPattern,
-            ) |stepIndex, accumulatedWheelStep| {
-                concreteAccumulatedWheelPattern[stepIndex] =
-                    initialBucketIndex * accumulatedWheelStep.divMultiplicator + accumulatedWheelStep.residueAddend;
-            }
-            break :blk concreteAccumulatedWheelPattern;
-        };
+        var accumulatedBucketIndexAdvance: [Comptimes.ADMISSIBLE_RESIDUES.count + 1]usize = undefined;
+        for (0..Comptimes.ADMISSIBLE_RESIDUES.count + 1, accumulatedWheelPattern) |stepIndex, accumulatedWheelStep| {
+            accumulatedBucketIndexAdvance[stepIndex] =
+                initialBucketIndex * accumulatedWheelStep.divMultiplicator + accumulatedWheelStep.residueAddend;
+        }
 
-        while (currentBucketIndex + concreteAccumulatedWheelPattern[7] < bucketCount) {
+        while (currentBucketIndex + accumulatedBucketIndexAdvance[7] < bucketCount) {
             inline for (
-                concreteAccumulatedWheelPattern[0..Comptimes.ADMISSIBLE_RESIDUES.count],
-                wheelPattern[0..Comptimes.ADMISSIBLE_RESIDUES.count],
-            ) |concreteAccumulatedWheelStep, wheelStep| {
-                buckets[currentBucketIndex + concreteAccumulatedWheelStep] &= wheelStep.bitMask;
+                accumulatedBucketIndexAdvance[0..Comptimes.ADMISSIBLE_RESIDUES.count],
+                accumulatedWheelPattern[0..Comptimes.ADMISSIBLE_RESIDUES.count],
+            ) |abia, ws| {
+                buckets[currentBucketIndex + abia] &= ws.bitMask;
             }
-            currentBucketIndex += concreteAccumulatedWheelPattern[8];
+            currentBucketIndex += accumulatedBucketIndexAdvance[8];
         }
 
         inline for (
             0..Comptimes.ADMISSIBLE_RESIDUES.count,
-            concreteAccumulatedWheelPattern[0..Comptimes.ADMISSIBLE_RESIDUES.count],
-            wheelPattern[0..Comptimes.ADMISSIBLE_RESIDUES.count],
-        ) |ari, concreteAccumulatedWheelStep, wheelStep| {
-            if (currentBucketIndex + concreteAccumulatedWheelStep < bucketCount) {
-                buckets[currentBucketIndex + concreteAccumulatedWheelStep] &= wheelStep.bitMask;
+            accumulatedBucketIndexAdvance[0..Comptimes.ADMISSIBLE_RESIDUES.count],
+            accumulatedWheelPattern[0..Comptimes.ADMISSIBLE_RESIDUES.count],
+        ) |ari, abia, ws| {
+            if (currentBucketIndex + abia < bucketCount) {
+                buckets[currentBucketIndex + abia] &= ws.bitMask;
             } else {
-                sievePrime.currentBucketIndex = currentBucketIndex + concreteAccumulatedWheelStep + bucketsStart;
+                sievePrime.currentBucketIndex = currentBucketIndex + abia + bucketsStart;
                 sievePrime.wheelStepIndex = wheelStepIndex +% @as(u3, ari);
+                mediumSievePrimesMap[(@as(usize, wheelStepIndex) + ari) % @bitSizeOf(Types.SIEVE_BUCKET_TYPE)].appendAssumeCapacity(sievePrime.*);
                 return;
             }
         } else {
