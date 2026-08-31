@@ -2,7 +2,7 @@ const std = @import("std");
 
 const Primes = @import("primes.zig");
 
-const LIMIT = 10_000_000_000;
+const LIMIT = 100_000_000_000;
 
 // Rust primal
 // 100:         541             5.25 µs
@@ -19,15 +19,15 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
     var limit: usize = 100;
-    while (limit <= LIMIT / 100) {
-        _ = try Primes.pi(allocator, limit);
+    while (limit <= 1_000_000) {
+        _ = try Primes.piSieveCounting(allocator, limit);
         limit *= 10;
     }
 
-    limit = 1;
-    while (limit <= 1) {
+    limit = 100;
+    while (limit <= LIMIT) {
         const t0 = std.Io.Clock.now(.awake, io);
-        const nthPrime = try Primes.nthPrime(allocator, 1_000_000_000);
+        const nthPrime = try Primes.piSieveCounting(allocator, limit);
         const t1 = std.Io.Clock.now(.awake, io);
 
         const duration = try formatDuration(allocator, t0.durationTo(t1).toNanoseconds());
