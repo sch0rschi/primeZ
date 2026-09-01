@@ -5,10 +5,10 @@ const Utils = @import("utils.zig");
 const config = @import("primeZConfig");
 
 const ALIGNMENT = std.mem.Alignment.@"8";
-const SEGMENT_ELEMS: usize = 1024 * config.l1_cache_size;
+const SEGMENT_ELEMS: usize = 1024 * config.l1_cache_size_in_kb;
 const BATCH_SIZE: usize = config.general_purpose_register_count / 5;
-
-const SMALL_MEDIUM_THRESHOLD: usize = SEGMENT_ELEMS / 5;
+const SMALL_SEGMENT_ELEMS: usize = @min(config.l1_cache_size, config.l1_cache_size_in_kb);
+const SMALL_MEDIUM_THRESHOLD: usize = 1024 * SMALL_SEGMENT_ELEMS / 5;
 const MEDIUM_LARGE_THRESHOLD: usize = SEGMENT_ELEMS * 7 / 4;
 
 const Segment = struct {

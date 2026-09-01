@@ -1,5 +1,4 @@
 N ?= 100000000000
-SIEVE_KIB ?= 32
 PERF_FREQ ?= 999
 JOBS ?= $(shell nproc)
 
@@ -37,7 +36,7 @@ help:
 	@echo "  make clean             remove build outputs and results"
 	@echo "  make distclean         also remove the primesieve build tree"
 	@echo ""
-	@echo "  vars: N=$(N) SIEVE_KIB=$(SIEVE_KIB) PERF_FREQ=$(PERF_FREQ)"
+	@echo "  vars: N=$(N) PERF_FREQ=$(PERF_FREQ)"
 
 all: bench
 
@@ -49,7 +48,7 @@ primesieve-build:
 
 primez-build:
 	rm -rf $(ROOT)/zig-out $(ROOT)/.zig-cache
-	cd $(ROOT) && zig build -Dl1_cache_size=$(SIEVE_KIB)
+	cd $(ROOT) && zig build
 
 perf-primez: primez-build
 	@mkdir -p $(RESULTS)
@@ -70,8 +69,8 @@ perf-primesieve: primesieve-build
 		echo "== primesieve: reusing cached results from a previous run (make clean to force a fresh one) =="; \
 		cat $(RESULTS)/primesieve.summary.txt; \
 	else \
-		echo "== perf recording primesieve (single-threaded, sieve size $(SIEVE_KIB) KiB, up to $(N)) =="; \
-		t=$$($(SCRIPTS)/perf_and_time.sh $(PERF_FREQ) $(RESULTS)/primesieve.perf.data -- $(PRIMESIEVE_BIN) $(N) -t1 -s$(SIEVE_KIB) --time --no-status); \
+		echo "== perf recording primesieve (single-threaded, auto-detected sieve size, up to $(N)) =="; \
+		t=$$($(SCRIPTS)/perf_and_time.sh $(PERF_FREQ) $(RESULTS)/primesieve.perf.data -- $(PRIMESIEVE_BIN) $(N) -t1 --time --no-status); \
 		echo "$$t" > $(RESULTS)/primesieve.seconds; \
 		echo "wall time: $${t}s"; \
 		echo; \

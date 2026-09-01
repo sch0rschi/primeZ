@@ -22,7 +22,7 @@ pub fn main(init: std.process.Init) !void {
 
     const durationNs = t0.durationTo(t1).toNanoseconds();
 
-    std.debug.print("Sieve size = {d} KiB\n", .{config.l1_cache_size});
+    std.debug.print("Sieve size = {d} KiB\n", .{config.l1_cache_size_in_kb});
     std.debug.print("Threads = 1\n", .{});
     std.debug.print("Seconds: {d:.3}\n", .{@as(f64, @floatFromInt(durationNs)) / std.time.ns_per_s});
     std.debug.print("Primes: {d}\n", .{primeCount});
