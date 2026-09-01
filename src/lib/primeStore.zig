@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const SegmentIterator = @import("segmentIterator.zig").SegmentIterator;
+const SegmentIterator = @import("segmentIterator/root.zig").SegmentIterator;
 const Types = @import("types.zig");
 const Utils = @import("utils.zig");
 const Comptimes = @import("comptimes.zig");
