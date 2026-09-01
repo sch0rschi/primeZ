@@ -2,7 +2,7 @@ const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
 const Utils = @import("../utils.zig");
-const config = @import("primeZConfig");
+const BuildUtils = @import("buildUtils");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
@@ -13,9 +13,9 @@ const LargeSievePrimes = @import("largeSievePrimes.zig").LargeSievePrimes;
 
 const ALIGNMENT = std.mem.Alignment.@"8";
 
-const SEGMENT_ELEMS: usize = 1024 * config.opt_segment_size_in_kb;
-const SMALL_MEDIUM_THRESHOLD: usize = @import("smallSievePrimes.zig").STRIPE_ELEMS / 5;
-const MEDIUM_LARGE_THRESHOLD: usize = SEGMENT_ELEMS * 7 / 4;
+const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
+const SMALL_MEDIUM_THRESHOLD: usize = BuildUtils.SMALL_MEDIUM_THRESHOLD;
+const MEDIUM_LARGE_THRESHOLD: usize = BuildUtils.MEDIUM_LARGE_THRESHOLD;
 
 const Segment = struct {
     containerStart: usize,
@@ -83,8 +83,6 @@ pub const SegmentIterator = struct {
         self.* = undefined;
     }
 
-    /// Computes the next segment and returns a view over it,
-    /// or `null` once the sieve range has been reached.
     pub fn next(self: *SegmentIterator) !?Segment {
         if (self.bucketsStart >= self.bucketsLength) {
             return null;

@@ -1,6 +1,7 @@
 const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
+const BuildUtils = @import("buildUtils");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
@@ -17,9 +18,10 @@ pub const MediumSievePrimes = struct {
         var maps: SievePrimesMap = undefined;
         var mapsSwap: SievePrimesMap = undefined;
         for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+            const capacity = BuildUtils.PRIME_COUNTS_BY_RESIDUE[ari];
             for (0..WHEEL_STEP_COUNT) |wsi| {
-                maps[ari][wsi] = try std.ArrayList(SievePrime).initCapacity(allocator, 10000);
-                mapsSwap[ari][wsi] = try std.ArrayList(SievePrime).initCapacity(allocator, 10000);
+                maps[ari][wsi] = try std.ArrayList(SievePrime).initCapacity(allocator, capacity);
+                mapsSwap[ari][wsi] = try std.ArrayList(SievePrime).initCapacity(allocator, capacity);
             }
         }
 

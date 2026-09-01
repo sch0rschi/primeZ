@@ -1,13 +1,13 @@
 const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
-const config = @import("primeZConfig");
+const BuildUtils = @import("buildUtils");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
 const applySievePrimeIntoSegment = SievePrimeMod.applySievePrimeIntoSegment;
 
-pub const STRIPE_ELEMS: usize = @as(usize, 1024) * @min(config.l1_cache_size_in_kb, config.opt_segment_size_in_kb);
+const STRIPE_ELEMS: usize = BuildUtils.STRIPE_ELEMS;
 
 pub const SmallSievePrimes = struct {
     map: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(SievePrime),
