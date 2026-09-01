@@ -1,8 +1,8 @@
 const std = @import("std");
 
-const Comptimes = @import("comptimes.zig");
-const Check = @import("primeCheck.zig");
-const Utils = @import("utils.zig");
+pub const Comptimes = @import("comptimes.zig");
+pub const PrimeCheck = @import("primeCheck.zig");
+
 const Primes = @import("primes.zig");
 const Estimates = @import("estimates.zig");
 const PrimeStore = @import("primeStore.zig").PrimeStore;
@@ -98,8 +98,8 @@ test "Sieve with primes" {
 
     var failCount: u8 = 0;
     for (0..10_000) |n| {
-        if (Check.isPrime(n) != primeStore.isPrime(n)) {
-            std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, Check.isPrime(n), primeStore.isPrime(n) });
+        if (PrimeCheck.isPrime(n) != primeStore.isPrime(n)) {
+            std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, PrimeCheck.isPrime(n), primeStore.isPrime(n) });
             failCount += 1;
             if (failCount >= 10) {
                 break;
@@ -107,8 +107,8 @@ test "Sieve with primes" {
         }
     }
     for (999_000..1_000_000) |n| {
-        if (Check.isPrime(n) != primeStore.isPrime(n)) {
-            std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, Check.isPrime(n), primeStore.isPrime(n) });
+        if (PrimeCheck.isPrime(n) != primeStore.isPrime(n)) {
+            std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, PrimeCheck.isPrime(n), primeStore.isPrime(n) });
             failCount += 1;
             if (failCount >= 10) {
                 break;
@@ -134,8 +134,8 @@ test "Sieve and list of primes" {
 
     var failCount: u8 = 0;
     for (999_000..1_000_000) |n| {
-        if (Check.isPrime(n) != primeStoreForQueries.isPrime(n)) {
-            std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, Check.isPrime(n), primeStoreForQueries.isPrime(n) });
+        if (PrimeCheck.isPrime(n) != primeStoreForQueries.isPrime(n)) {
+            std.debug.print("Number: {}, expected: {}, actual: {}.\n", .{ n, PrimeCheck.isPrime(n), primeStoreForQueries.isPrime(n) });
             failCount += 1;
             if (failCount >= 10) {
                 break;
@@ -157,7 +157,7 @@ test "oeis A014233 strong pseudoprimes" {
         3825123056546413051,
     };
     for (A014233) |p| {
-        try std.testing.expect(!Check.isPrime(p));
+        try std.testing.expect(!PrimeCheck.isPrime(p));
     }
 }
 
@@ -179,8 +179,6 @@ test "piSieveCounting matches getPrimes length at container boundaries" {
         try expectPiSieveCountingMatchesGetPrimes(allocator, limit);
     }
 
-    // One container covers 240 numbers (8 bytes * 30); check just around
-    // each boundary rather than sweeping every value in between.
     var boundary: usize = 240;
     while (boundary <= 2400) : (boundary += 240) {
         try expectPiSieveCountingMatchesGetPrimes(allocator, boundary - 1);
@@ -192,8 +190,6 @@ test "piSieveCounting matches getPrimes length at container boundaries" {
 test "piSieveCounting matches getPrimes length at a segment boundary" {
     const allocator = std.testing.allocator;
 
-    // Test build config uses opt_segment_size_in_kb=4, so one segment spans
-    // 1024*4*30 = 122880 numbers; check just around that boundary.
     const segmentBoundary: usize = 122_880;
     try expectPiSieveCountingMatchesGetPrimes(allocator, segmentBoundary - 1);
     try expectPiSieveCountingMatchesGetPrimes(allocator, segmentBoundary);

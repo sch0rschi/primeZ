@@ -3,12 +3,13 @@ const std = @import("std");
 const Utils = @import("utils.zig");
 const Check = @import("primeCheck.zig");
 const Types = @import("types.zig");
+const WheelShape = @import("buildUtils").WheelShape;
 
-pub const WHEEL_PRIMES = [_]Types.PRIME_TYPE{ 2, 3, 5 };
+pub const WHEEL_PRIMES = WheelShape.PRIMES;
 
-pub const WHEEL_CIRCUMFERENCE = computeWheelCircumference();
+pub const WHEEL_CIRCUMFERENCE = WheelShape.CIRCUMFERENCE;
 
-const ADMISSIBLE_RESIDUES_COUNT: comptime_int = computeAdmissibleResiduesCount();
+const ADMISSIBLE_RESIDUES_COUNT: comptime_int = WheelShape.RESIDUE_CLASS_COUNT;
 
 pub const AdmissibleResidues = struct {
     count: comptime_int,
@@ -29,24 +30,6 @@ pub const WheelStep = struct {
 };
 
 pub const WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep = buildWheelPatterns();
-
-fn computeWheelCircumference() usize {
-    var product = 1;
-    for (WHEEL_PRIMES) |p| product *= p;
-    return product;
-}
-
-fn computeAdmissibleResiduesCount() usize {
-    var count: usize = 0;
-    for (0..WHEEL_CIRCUMFERENCE) |r| {
-        for (WHEEL_PRIMES) |p| {
-            if (r % p == 0) break;
-        } else {
-            count += 1;
-        }
-    }
-    return count;
-}
 
 fn buildFirstPrimeSieveElement() Types.SIEVE_BUCKET_TYPE {
     var firstPrimesSieveElement = 0;
