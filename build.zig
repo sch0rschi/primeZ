@@ -9,6 +9,11 @@ const DETECTION_FALLBACK = 32;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
+    const optimize = b.option(
+        std.builtin.OptimizeMode,
+        "optimize",
+        "Prioritize performance, safety, or binary size (default: ReleaseFast).",
+    ) orelse .ReleaseFast;
 
     const l1_cache_size_in_kb =
         b.option(
@@ -78,7 +83,7 @@ pub fn build(b: *std.Build) void {
     const cli_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = b.graph.host,
-        .optimize = .ReleaseFast,
+        .optimize = optimize,
         .imports = &.{
             .{ .name = "primeZ", .module = primeZ },
         },
