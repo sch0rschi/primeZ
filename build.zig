@@ -101,43 +101,37 @@ pub fn build(b: *std.Build) void {
 }
 
 fn detectL1CacheSizeKiB(b: *std.Build, target: std.Build.ResolvedTarget) usize {
-    if (!target.query.isNative()) {
+    return detectCacheSizeKiB(b, target, "LEVEL1_DCACHE_SIZE", "hw.l1dcachesize") orelse {
         std.debug.print(
-            "warning: L1 cache size auto-detection needs a native build (not cross-compiling); using fallback of {d} KiB. Pass -D{s}=<KiB> to override.\n",
+            "warning: L1 cache size auto-detection failed or is unsupported on this target; using fallback of {d} KiB. Pass -D{s}=<KiB> to override.\n",
             .{ DETECTION_FALLBACK, L1_CACHE_SIZE_IN_KB },
         );
         return DETECTION_FALLBACK;
-    }
+    };
+}
+
+fn detectL2CacheSizeKiB(b: *std.Build, target: std.Build.ResolvedTarget) ?usize {
+    return detectCacheSizeKiB(b, target, "LEVEL2_CACHE_SIZE", "hw.l2cachesize");
+}
+
+fn detectCacheSizeKiB(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    linuxGetconfKey: []const u8,
+    macosSysctlKey: []const u8,
+) ?usize {
+    if (!target.query.isNative()) return null;
 
     const argv: []const []const u8 = switch (target.result.os.tag) {
-        .linux => &.{ "getconf", "LEVEL1_DCACHE_SIZE" },
-        .macos => &.{ "sysctl", "-n", "hw.l1dcachesize" },
-        else => |os| {
-            std.debug.print(
-                "warning: L1 cache size auto-detection is not supported on {t}; using fallback of {d} KiB. Pass -D{s}=<KiB> to override.\n",
-                .{ os, DETECTION_FALLBACK, L1_CACHE_SIZE_IN_KB },
-            );
-            return DETECTION_FALLBACK;
-        },
+        .linux => &.{ "getconf", linuxGetconfKey },
+        .macos => &.{ "sysctl", "-n", macosSysctlKey },
+        else => return null,
     };
 
     var code: u8 = undefined;
-    const stdout = b.runAllowFail(argv, &code, .inherit) catch |err| {
-        std.debug.print(
-            "warning: failed to auto-detect L1 cache size via `{s}` ({t}); using fallback of {d} KiB. Pass -D{s}=<KiB> to override.\n",
-            .{ argv[0], err, DETECTION_FALLBACK, L1_CACHE_SIZE_IN_KB },
-        );
-        return DETECTION_FALLBACK;
-    };
-
-    const bytes = std.fmt.parseInt(usize, std.mem.trim(u8, stdout, " \t\r\n"), 10) catch {
-        std.debug.print(
-            "warning: could not parse `{s}` output {s}; using fallback of {d} KiB. Pass -D{s}=<KiB> to override.\n",
-            .{ argv[0], stdout, DETECTION_FALLBACK, L1_CACHE_SIZE_IN_KB },
-        );
-        return DETECTION_FALLBACK;
-    };
-
+    const stdout = b.runAllowFail(argv, &code, .inherit) catch return null;
+    const bytes = std.fmt.parseInt(usize, std.mem.trim(u8, stdout, " \t\r\n"), 10) catch return null;
+    if (bytes == 0) return null;
     return bytes / 1024;
 }
 
@@ -148,22 +142,6 @@ fn computeOptSegmentSizeKiB(l1CacheSizeKiB: usize, l2CacheSizeKiB: usize) usize 
     const maxSize = @max(l1CacheSizeKiB, maxFromL2);
     const size = @min(l1CacheSizeKiB * 8, maxSize);
     return floorPow2Clamped(size);
-}
-
-fn detectL2CacheSizeKiB(b: *std.Build, target: std.Build.ResolvedTarget) ?usize {
-    if (!target.query.isNative()) return null;
-
-    const argv: []const []const u8 = switch (target.result.os.tag) {
-        .linux => &.{ "getconf", "LEVEL2_CACHE_SIZE" },
-        .macos => &.{ "sysctl", "-n", "hw.l2cachesize" },
-        else => return null,
-    };
-
-    var code: u8 = undefined;
-    const stdout = b.runAllowFail(argv, &code, .inherit) catch return null;
-    const bytes = std.fmt.parseInt(usize, std.mem.trim(u8, stdout, " \t\r\n"), 10) catch return null;
-    if (bytes == 0) return null;
-    return bytes / 1024;
 }
 
 fn floorPow2Clamped(kib: usize) usize {
