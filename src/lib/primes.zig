@@ -4,7 +4,7 @@ const Estimates = @import("estimates.zig");
 const Comptimes = @import("comptimes.zig");
 const Utils = @import("utils.zig");
 const Types = @import("types.zig");
-const SegmentIterator = @import("segmentIterator.zig").SegmentIterator;
+const SegmentIterator = @import("segmentIterator/root.zig").SegmentIterator;
 const Pi = @import("pi.zig");
 
 /// Computes the nth prime, zero indexed.
