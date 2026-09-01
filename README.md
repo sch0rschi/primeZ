@@ -60,14 +60,18 @@ Values are specified in KiB.
 
 `bench/` vendors [primesieve](https://github.com/kimwalisch/primesieve)
 as a git submodule and provides a `Makefile` that builds both, records
-each with `perf`, and reports a side-by-side breakdown of time spent in
-the small/medium/large sieving-prime regimes both implementations use
-internally:
+each (`perf` on Linux, `sample` on macOS), and reports a side-by-side
+breakdown of time spent in the small/medium/large sieving-prime regimes
+both implementations use internally:
 
 ``` sh
 git submodule update --init bench/primesieve
 make -C bench bench
 ```
+
+On macOS, `sample` ships with the Xcode Command Line Tools and needs
+Python 3 on `PATH` to parse its output; if it can't attach to the
+benchmark process, try re-running under `sudo`.
 
 See `bench/Makefile` for the available targets and variables.
 

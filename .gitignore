@@ -4,5 +4,6 @@
 /bench/*/build/
 /bench/*/target/
 /bench/results/
+/bench/scripts/__pycache__/
 
 /.idea/

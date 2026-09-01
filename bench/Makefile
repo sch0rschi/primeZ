@@ -1,6 +1,6 @@
 N ?= 100000000000
 PERF_FREQ ?= 999
-JOBS ?= $(shell nproc)
+JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
 
 HERE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ROOT := $(abspath $(HERE)/..)
@@ -13,22 +13,14 @@ PRIMESIEVE_BIN := $(PRIMESIEVE_BUILD)/primesieve
 PRIMAL_BENCH_DIR := $(HERE)/primal-bench
 PRIMAL_BIN := $(PRIMAL_BENCH_DIR)/target/release/primal-bench
 
-PRIMEZ_SMALL := segmentIterator\.SegmentIterator\.applySmallSievePrimes
-PRIMEZ_MEDIUM := segmentIterator\.SegmentIterator\.(applyMediumSievePrimes|activateMediumSievePrimes)
-PRIMEZ_LARGE := applyLargeSievePrimesBatch
-PRIMEZ_DISCOVERY := findSievePrimesInSegment
-
-PRIMESIEVE_SMALL := EratSmall::
-PRIMESIEVE_MEDIUM := EratMedium::
-PRIMESIEVE_LARGE := EratBig::
-
 .PHONY: help all bench compare primesieve-build primez-build primal-build perf-primez perf-primesieve perf-primal clean distclean
 .NOTPARALLEL:
 
 help:
 	@echo "primeZ vs. primesieve vs. primal benchmarks"
 	@echo ""
-	@echo "  make bench             build + perf-record + report all implementations"
+	@echo "  make bench             build + record + report all implementations"
+	@echo "                          (perf on Linux, sample on macOS)"
 	@echo "  make perf-primez       just primeZ"
 	@echo "  make perf-primesieve   just primesieve"
 	@echo "  make perf-primal       just primal"
@@ -52,14 +44,13 @@ primez-build:
 
 perf-primez: primez-build
 	@mkdir -p $(RESULTS)
-	@echo "== perf recording primez CLI (up to $(N)) =="
-	@t=$$($(SCRIPTS)/perf_and_time.sh $(PERF_FREQ) $(RESULTS)/primez.perf.data -- $(ROOT)/zig-out/bin/primez $(N)); \
+	@echo "== recording primez CLI (up to $(N)) =="
+	@t=$$(python3 $(SCRIPTS)/record_and_time.py $(PERF_FREQ) $(RESULTS)/primez.perf.data -- $(ROOT)/zig-out/bin/primez $(N)); \
 	echo "$$t" > $(RESULTS)/primez.seconds; \
 	echo "wall time: $${t}s"; \
 	echo; \
-	echo "== primeZ phase breakdown (perf self-time) =="; \
-	$(SCRIPTS)/summarize.sh $(RESULTS)/primez.perf.data "$$t" $(RESULTS)/primez.report.txt \
-		'small=$(PRIMEZ_SMALL)' 'medium=$(PRIMEZ_MEDIUM)' 'large=$(PRIMEZ_LARGE)' 'discovery=$(PRIMEZ_DISCOVERY)' \
+	echo "== primeZ phase breakdown (self-time) =="; \
+	python3 $(SCRIPTS)/summarize.py primez $(RESULTS)/primez.perf.data "$$t" $(RESULTS)/primez.report.txt \
 		| tee $(RESULTS)/primez.summary.txt
 
 perf-primesieve: primesieve-build
@@ -69,14 +60,13 @@ perf-primesieve: primesieve-build
 		echo "== primesieve: reusing cached results from a previous run (make clean to force a fresh one) =="; \
 		cat $(RESULTS)/primesieve.summary.txt; \
 	else \
-		echo "== perf recording primesieve (single-threaded, auto-detected sieve size, up to $(N)) =="; \
-		t=$$($(SCRIPTS)/perf_and_time.sh $(PERF_FREQ) $(RESULTS)/primesieve.perf.data -- $(PRIMESIEVE_BIN) $(N) -t1 --time --no-status); \
+		echo "== recording primesieve (single-threaded, auto-detected sieve size, up to $(N)) =="; \
+		t=$$(python3 $(SCRIPTS)/record_and_time.py $(PERF_FREQ) $(RESULTS)/primesieve.perf.data -- $(PRIMESIEVE_BIN) $(N) -t1 --time --no-status); \
 		echo "$$t" > $(RESULTS)/primesieve.seconds; \
 		echo "wall time: $${t}s"; \
 		echo; \
-		echo "== primesieve phase breakdown (perf self-time) =="; \
-		$(SCRIPTS)/summarize.sh $(RESULTS)/primesieve.perf.data "$$t" $(RESULTS)/primesieve.report.txt \
-			'small=$(PRIMESIEVE_SMALL)' 'medium=$(PRIMESIEVE_MEDIUM)' 'large=$(PRIMESIEVE_LARGE)' \
+		echo "== primesieve phase breakdown (self-time) =="; \
+		python3 $(SCRIPTS)/summarize.py primesieve $(RESULTS)/primesieve.perf.data "$$t" $(RESULTS)/primesieve.report.txt \
 			| tee $(RESULTS)/primesieve.summary.txt; \
 	fi
 
@@ -89,8 +79,8 @@ perf-primal: primal-build
 		echo "== primal: reusing cached results from a previous run (make clean to force a fresh one) =="; \
 		cat $(RESULTS)/primal.summary.txt; \
 	else \
-		echo "== perf recording primal (single-threaded, up to $(N)) =="; \
-		t=$$($(SCRIPTS)/perf_and_time.sh $(PERF_FREQ) $(RESULTS)/primal.perf.data -- $(PRIMAL_BIN) $(N)); \
+		echo "== recording primal (single-threaded, up to $(N)) =="; \
+		t=$$(python3 $(SCRIPTS)/record_and_time.py $(PERF_FREQ) $(RESULTS)/primal.perf.data -- $(PRIMAL_BIN) $(N)); \
 		echo "$$t" > $(RESULTS)/primal.seconds; \
 		echo "wall time: $${t}s" | tee $(RESULTS)/primal.summary.txt; \
 	fi
@@ -100,7 +90,7 @@ bench: perf-primez perf-primesieve perf-primal compare
 compare:
 	@echo
 	@echo "== primeZ vs. primesieve vs. primal =="
-	@$(SCRIPTS)/compare.sh \
+	@python3 $(SCRIPTS)/compare.py \
 		$(RESULTS)/primez.report.txt "$$(cat $(RESULTS)/primez.seconds)" \
 		$(RESULTS)/primesieve.report.txt "$$(cat $(RESULTS)/primesieve.seconds)" \
 		"$$(cat $(RESULTS)/primal.seconds 2>/dev/null)"
