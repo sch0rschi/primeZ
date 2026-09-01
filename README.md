@@ -3,9 +3,9 @@
 primeZ is a prime number utility library written in Zig.\
 Explicit performance. Close to the metal.
 
-It takes inspiration from the Rust library
-[primal](https://github.com/huonw/primal) and, transitively,\
-from [primesieve](https://github.com/kimwalisch/primesieve).
+It takes inspiration from [primesieve](https://github.com/kimwalisch/primesieve)
+our thanks to Kim Walisch for such a fast, well-documented implementation.
+Earlier on, it drew inspiration from the Rust library [primal](https://github.com/huonw/primal) as well.
 
 ------------------------------------------------------------------------
 
@@ -46,14 +46,15 @@ zig build
 ./zig-out/bin/primez 100000000000
 ```
 
-The build supports configuring the assumed L1 cache size (used as the
-sieve's segment size) via a build-time parameter:
+The build auto-detects the CPU's L1 and L2 cache sizes and derives a
+segment size from them internally. Both cache sizes are build-time
+parameters that can be overridden:
 
 ``` sh
-zig build -Dl1_cache_size=128
+zig build -Dl1_cache_size_in_kb=128 -Dl2_cache_size_in_kb=1024
 ```
 
-The value is specified in KiB.
+Values are specified in KiB.
 
 ### Comparing against primesieve
 

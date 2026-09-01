@@ -192,7 +192,7 @@ test "piSieveCounting matches getPrimes length at container boundaries" {
 test "piSieveCounting matches getPrimes length at a segment boundary" {
     const allocator = std.testing.allocator;
 
-    // Test build config uses l1_cache_size=4, so one segment spans
+    // Test build config uses opt_segment_size_in_kb=4, so one segment spans
     // 1024*4*30 = 122880 numbers; check just around that boundary.
     const segmentBoundary: usize = 122_880;
     try expectPiSieveCountingMatchesGetPrimes(allocator, segmentBoundary - 1);

@@ -1,8 +1,8 @@
 /.zig-cache/
 /zig-out/
 
-/benchmarks/
-
 /bench/*/build/
 /bench/*/target/
 /bench/results/
+
+/.idea/

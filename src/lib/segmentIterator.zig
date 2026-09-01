@@ -5,10 +5,12 @@ const Utils = @import("utils.zig");
 const config = @import("primeZConfig");
 
 const ALIGNMENT = std.mem.Alignment.@"8";
-const SEGMENT_ELEMS: usize = 1024 * config.l1_cache_size_in_kb;
+
 const BATCH_SIZE: usize = config.general_purpose_register_count / 5;
-const SMALL_SEGMENT_ELEMS: usize = @min(config.l1_cache_size, config.l1_cache_size_in_kb);
-const SMALL_MEDIUM_THRESHOLD: usize = 1024 * SMALL_SEGMENT_ELEMS / 5;
+
+const SEGMENT_ELEMS: usize = 1024 * config.opt_segment_size_in_kb;
+const SMALL_STRIPE_ELEMS: usize = @as(usize, 1024) * @min(config.l1_cache_size_in_kb, config.opt_segment_size_in_kb);
+const SMALL_MEDIUM_THRESHOLD: usize = SMALL_STRIPE_ELEMS / 5;
 const MEDIUM_LARGE_THRESHOLD: usize = SEGMENT_ELEMS * 7 / 4;
 
 const Segment = struct {
@@ -243,31 +245,36 @@ pub const SegmentIterator = struct {
     }
 
     fn applySmallSievePrimes(self: *SegmentIterator) void {
-        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-            const smallSievePrimes = self.smallSievePrimesMap[ari];
-            for (smallSievePrimes.items[0..self.smallSievePrimesActiveCounts[ari]]) |*activeSmallSievePrime| {
-                if (activeSmallSievePrime.currentBucketIndex < self.bucketsEndExclusive) {
-                    applySmallSievePrimeIntoSegment(
-                        ari,
-                        self.buckets,
-                        self.bucketsStart,
-                        self.bucketsEndExclusive,
-                        activeSmallSievePrime,
-                    );
+        var stripeEnd = self.bucketsStart;
+        while (stripeEnd < self.bucketsEndExclusive) {
+            stripeEnd = @min(stripeEnd + SMALL_STRIPE_ELEMS, self.bucketsEndExclusive);
+
+            inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+                const smallSievePrimes = self.smallSievePrimesMap[ari];
+                for (smallSievePrimes.items[0..self.smallSievePrimesActiveCounts[ari]]) |*activeSmallSievePrime| {
+                    if (activeSmallSievePrime.currentBucketIndex < stripeEnd) {
+                        applySmallSievePrimeIntoSegment(
+                            ari,
+                            self.buckets,
+                            self.bucketsStart,
+                            stripeEnd,
+                            activeSmallSievePrime,
+                        );
+                    }
                 }
-            }
-            for (smallSievePrimes.items[self.smallSievePrimesActiveCounts[ari]..]) |*inactiveSmallSievePrime| {
-                if (inactiveSmallSievePrime.currentBucketIndex < self.bucketsEndExclusive) {
-                    applySmallSievePrimeIntoSegment(
-                        ari,
-                        self.buckets,
-                        self.bucketsStart,
-                        self.bucketsEndExclusive,
-                        inactiveSmallSievePrime,
-                    );
-                    self.smallSievePrimesActiveCounts[ari] += 1;
-                } else {
-                    break;
+                for (smallSievePrimes.items[self.smallSievePrimesActiveCounts[ari]..]) |*inactiveSmallSievePrime| {
+                    if (inactiveSmallSievePrime.currentBucketIndex < stripeEnd) {
+                        applySmallSievePrimeIntoSegment(
+                            ari,
+                            self.buckets,
+                            self.bucketsStart,
+                            stripeEnd,
+                            inactiveSmallSievePrime,
+                        );
+                        self.smallSievePrimesActiveCounts[ari] += 1;
+                    } else {
+                        break;
+                    }
                 }
             }
         }
