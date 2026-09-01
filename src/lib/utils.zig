@@ -17,6 +17,16 @@ pub fn admissibleNumberToBitIndex(number: usize) usize {
     return div * Comptimes.ADMISSIBLE_RESIDUES.count + Comptimes.ADMISSIBLE_RESIDUES.reverseMap[mod];
 }
 
+pub fn admissibleCountUpTo(limitInclusive: usize) usize {
+    const fullWheels = limitInclusive / Comptimes.WHEEL_CIRCUMFERENCE;
+    const rem = limitInclusive % Comptimes.WHEEL_CIRCUMFERENCE;
+    var extra: usize = 0;
+    for (Comptimes.ADMISSIBLE_RESIDUES.list) |r| {
+        if (r <= rem) extra += 1;
+    }
+    return fullWheels * Comptimes.ADMISSIBLE_RESIDUES.count + extra;
+}
+
 pub fn getSieveLength(limitInclusive: usize) usize {
     return divCeil(limitInclusive * @sizeOf(Types.SIEVE_BUCKET_TYPE), Comptimes.WHEEL_CIRCUMFERENCE);
 }

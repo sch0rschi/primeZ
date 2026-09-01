@@ -8,6 +8,9 @@ const ALIGNMENT = std.mem.Alignment.@"8";
 const SEGMENT_ELEMS: usize = 1024 * config.l1_cache_size;
 const BATCH_SIZE: usize = config.general_purpose_register_count / 5;
 
+const SMALL_MEDIUM_THRESHOLD: usize = SEGMENT_ELEMS / 5;
+const MEDIUM_LARGE_THRESHOLD: usize = SEGMENT_ELEMS * 7 / 4;
+
 const Segment = struct {
     containerStart: usize,
     containerEndExclusive: usize,
@@ -185,8 +188,9 @@ pub const SegmentIterator = struct {
             while (bucketWorkingCopy != 0) {
                 const inBucketIndex: u3 = Utils.lsb(bucketWorkingCopy);
                 var sievePrime = SievePrime.from(bucketIndex, inBucketIndex);
+                const prime = Utils.admissibleNumberFromBitIndex(@bitSizeOf(Types.SIEVE_BUCKET_TYPE) * bucketIndex + inBucketIndex);
 
-                if (120 * bucketIndex < SEGMENT_ELEMS) {
+                if (prime <= SMALL_MEDIUM_THRESHOLD) {
                     inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
                         if (ari == inBucketIndex) {
                             if (sievePrime.currentBucketIndex < self.bucketsEndExclusive) {
@@ -201,7 +205,7 @@ pub const SegmentIterator = struct {
                             try self.smallSievePrimesMap[ari].append(self.allocator, sievePrime);
                         }
                     }
-                } else if (true) {
+                } else if (prime <= MEDIUM_LARGE_THRESHOLD) {
                     inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
                         if (ari == inBucketIndex) {
                             if (sievePrime.currentBucketIndex < self.bucketsEndExclusive) {
@@ -305,7 +309,7 @@ pub const SegmentIterator = struct {
         );
     }
 
-    fn applyLargeSievePrimesBatch(
+    noinline fn applyLargeSievePrimesBatch(
         comptime batchSize: usize,
         buckets: Types.SIEVE_BUCKETS_TYPE,
         bucketsStart: usize,

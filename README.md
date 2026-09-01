@@ -30,28 +30,45 @@ numbers outside the range.
 
 ## Benchmark
 
-primeZ includes a benchmark for measuring sieve performance over 100
-full runs.
+The library itself (`src/lib/`) has no entry point — same as
+libprimesieve. `src/main.zig` is primeZ's own small CLI, calling into
+the library through its public module boundary, the same relationship
+primesieve's `src/app/` (its CLI) has to libprimesieve. It sieves
+primes up to a given limit and reports the count and elapsed time —
+the same summary primesieve's own CLI prints with `--time`.
 
-The benchmark repeatedly constructs a segmented sieve for values up to
-100 Million, followed by prime collection to measure performance.
+### Running it
 
-### Running the benchmark
-
-Build and run the benchmark with:
+Build once and call the binary directly, like primesieve:
 
 ``` sh
-zig build benchmark
+zig build
+./zig-out/bin/primez 100000000000
 ```
 
-The build supports configuring the assumed L1 cache size via a
-build-time parameter:
+The build supports configuring the assumed L1 cache size (used as the
+sieve's segment size) via a build-time parameter:
 
 ``` sh
-zig build benchmark -Dl1-cache-size=128
+zig build -Dl1_cache_size=128
 ```
 
 The value is specified in KiB.
+
+### Comparing against primesieve
+
+`bench/` vendors [primesieve](https://github.com/kimwalisch/primesieve)
+as a git submodule and provides a `Makefile` that builds both, records
+each with `perf`, and reports a side-by-side breakdown of time spent in
+the small/medium/large sieving-prime regimes both implementations use
+internally:
+
+``` sh
+git submodule update --init bench/primesieve
+make -C bench bench
+```
+
+See `bench/Makefile` for the available targets and variables.
 
 ------------------------------------------------------------------------
 

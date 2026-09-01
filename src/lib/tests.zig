@@ -161,6 +161,45 @@ test "oeis A014233 strong pseudoprimes" {
     }
 }
 
+fn expectPiSieveCountingMatchesGetPrimes(allocator: std.mem.Allocator, limit: usize) !void {
+    const counted = try Primes.piSieveCounting(allocator, limit);
+    const primes = try Primes.getPrimes(allocator, limit);
+    defer allocator.free(primes);
+    if (counted != primes.len) {
+        std.debug.print("limit={}: piSieveCounting={} getPrimes.len={}\n", .{ limit, counted, primes.len });
+    }
+    try std.testing.expectEqual(primes.len, counted);
+}
+
+test "piSieveCounting matches getPrimes length at container boundaries" {
+    const allocator = std.testing.allocator;
+
+    const smallLimits = [_]usize{ 7, 8, 9, 10, 11, 29, 30, 31, 100 };
+    for (smallLimits) |limit| {
+        try expectPiSieveCountingMatchesGetPrimes(allocator, limit);
+    }
+
+    // One container covers 240 numbers (8 bytes * 30); check just around
+    // each boundary rather than sweeping every value in between.
+    var boundary: usize = 240;
+    while (boundary <= 2400) : (boundary += 240) {
+        try expectPiSieveCountingMatchesGetPrimes(allocator, boundary - 1);
+        try expectPiSieveCountingMatchesGetPrimes(allocator, boundary);
+        try expectPiSieveCountingMatchesGetPrimes(allocator, boundary + 1);
+    }
+}
+
+test "piSieveCounting matches getPrimes length at a segment boundary" {
+    const allocator = std.testing.allocator;
+
+    // Test build config uses l1_cache_size=4, so one segment spans
+    // 1024*4*30 = 122880 numbers; check just around that boundary.
+    const segmentBoundary: usize = 122_880;
+    try expectPiSieveCountingMatchesGetPrimes(allocator, segmentBoundary - 1);
+    try expectPiSieveCountingMatchesGetPrimes(allocator, segmentBoundary);
+    try expectPiSieveCountingMatchesGetPrimes(allocator, segmentBoundary + 1);
+}
+
 test "Primes.pi small values" {
     const allocator = std.testing.allocator;
 

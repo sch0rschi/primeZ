@@ -38,8 +38,13 @@ pub fn build(b: *std.Build) void {
     options.addOption(usize, L1_CACHE_SIZE, l1_cache_size);
     options.addOption(usize, GENERAL_PURPOSE_REGISTER_COUNT, general_purpose_register_count);
 
+    const primeZ = b.addModule("primeZ", .{
+        .root_source_file = b.path("src/lib/root.zig"),
+    });
+    primeZ.addOptions("primeZConfig", options);
+
     const test_mod = b.createModule(.{
-        .root_source_file = b.path("src/tests.zig"),
+        .root_source_file = b.path("src/lib/tests.zig"),
         .target = b.graph.host,
         .optimize = .Debug,
     });
@@ -57,28 +62,23 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
 
-    const benchmark_mod = b.createModule(.{
-        .root_source_file = b.path("src/benchmark.zig"),
+    const cli_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
         .target = b.graph.host,
         .optimize = .ReleaseFast,
+        .imports = &.{
+            .{ .name = "primeZ", .module = primeZ },
+        },
     });
+    const cli_options = b.addOptions();
+    cli_options.addOption(usize, L1_CACHE_SIZE, l1_cache_size);
+    cli_mod.addOptions("cliConfig", cli_options);
 
-    benchmark_mod.addOptions("primeZConfig", options);
-
-    const benchmark_exe = b.addExecutable(.{
-        .name = "benchmark",
-        .root_module = benchmark_mod,
+    const cli_exe = b.addExecutable(.{
+        .name = "primez",
+        .root_module = cli_mod,
     });
-
-    const run_benchmark_exe = b.addRunArtifact(benchmark_exe);
-    b.installArtifact(benchmark_exe);
-    const benchmark_step = b.step("benchmark", "Run benchmarks");
-    benchmark_step.dependOn(&run_benchmark_exe.step);
-
-    const primeZ = b.addModule("primeZ", .{
-        .root_source_file = b.path("src/root.zig"),
-    });
-    primeZ.addOptions("primeZConfig", options);
+    b.installArtifact(cli_exe);
 }
 
 fn computeDefaults(target: std.Target) DefaultBuildParameters {

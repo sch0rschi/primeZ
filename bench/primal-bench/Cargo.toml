@@ -1,0 +1,15 @@
+[package]
+name = "primal-bench"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "primal-bench"
+path = "src/main.rs"
+
+[dependencies]
+primal = { path = "../primal" }
+
+[profile.release]
+opt-level = 3
+lto = true

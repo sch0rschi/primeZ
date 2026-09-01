@@ -1,0 +1,7 @@
+[submodule "bench/primesieve"]
+	path = bench/primesieve
+	url = https://github.com/kimwalisch/primesieve.git
+
+[submodule "bench/primal"]
+	path = bench/primal
+	url = https://github.com/huonw/primal.git

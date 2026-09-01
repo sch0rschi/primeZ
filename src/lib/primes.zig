@@ -139,6 +139,19 @@ pub fn piSieveCounting(allocator: std.mem.Allocator, limit: u64) !usize {
         }
     }
 
+    const windowSize = segmentIterator.buckets.len;
+    const finalSegmentStart = ((segmentIterator.bucketsLength - 1) / windowSize) * windowSize;
+    const lastContainerLocalIndex = (segmentIterator.bucketsLength - finalSegmentStart) / 8 - 1;
+    const lastContainer = segmentIterator.containers[lastContainerLocalIndex];
+
+    const validBitCount = Utils.admissibleCountUpTo(limit);
+    const lastContainerStartBit = segmentIterator.bucketsLength * 8 - 64;
+    const excessStart = if (validBitCount > lastContainerStartBit) validBitCount - lastContainerStartBit else 0;
+    if (excessStart < 64) {
+        const tailMask: Types.SIEVE_CONTAINER_TYPE = ~@as(Types.SIEVE_CONTAINER_TYPE, 0) << @intCast(excessStart);
+        count -= @popCount(lastContainer & tailMask);
+    }
+
     return count;
 }
 
