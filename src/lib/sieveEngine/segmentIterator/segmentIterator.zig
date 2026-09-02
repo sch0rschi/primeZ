@@ -130,9 +130,9 @@ pub const SegmentIterator = struct {
                         if (prime <= SMALL_MEDIUM_THRESHOLD) {
                             try self.small.add(self.allocator, ari, self.buckets, self.bucketsStart, self.bucketsEndExclusive, sievePrime);
                         } else if (prime <= MEDIUM_LARGE_THRESHOLD) {
-                            try self.medium.add(self.allocator, ari, self.buckets, self.bucketsStart, self.bucketsEndExclusive, sievePrime);
+                            try self.medium.add(self.allocator, sievePrime);
                         } else {
-                            try self.large.add(self.allocator, ari, self.buckets, self.bucketsStart, self.bucketsEndExclusive, sievePrime);
+                            try self.large.add(self.allocator, sievePrime);
                         }
                     }
                 }

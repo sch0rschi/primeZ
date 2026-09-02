@@ -5,7 +5,6 @@ const BuildUtils = @import("buildUtils");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
-const applySievePrimeIntoSegment = SievePrimeMod.applySievePrimeIntoSegment;
 
 const WHEEL_STEP_COUNT = @bitSizeOf(Types.SIEVE_BUCKET_TYPE);
 const SievePrimesMap = [Comptimes.ADMISSIBLE_RESIDUES.count][WHEEL_STEP_COUNT]std.ArrayList(SievePrime);
@@ -40,20 +39,16 @@ pub const MediumSievePrimes = struct {
         }
     }
 
+    // A medium sieving prime's square is never within the segment where it
+    // was discovered (SMALL_MEDIUM_THRESHOLD is always well above
+    // sqrt(SEGMENT_ELEMS * 30) for any realistic cache-derived config), so
+    // unlike SmallSievePrimes.add(), there's nothing to cross off yet.
     pub fn add(
         self: *MediumSievePrimes,
         allocator: std.mem.Allocator,
-        comptime inBucketIndex: u3,
-        buckets: Types.SIEVE_BUCKETS_TYPE,
-        bucketsStart: usize,
-        bucketsEndExclusive: usize,
         sievePrime: SievePrime,
     ) !void {
-        var registered = sievePrime;
-        if (registered.currentBucketIndex < bucketsEndExclusive) {
-            applySievePrimeIntoSegment(inBucketIndex, buckets, bucketsStart, bucketsEndExclusive, &registered);
-        }
-        try self.maps[registered.initialInBucketIndex][registered.wheelStepIndex].append(allocator, registered);
+        try self.maps[sievePrime.initialInBucketIndex][sievePrime.wheelStepIndex].append(allocator, sievePrime);
     }
 
     pub noinline fn apply(

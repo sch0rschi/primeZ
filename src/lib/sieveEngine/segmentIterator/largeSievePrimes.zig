@@ -4,7 +4,6 @@ const Comptimes = @import("../comptimes.zig");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
-const applySievePrimeIntoSegment = SievePrimeMod.applySievePrimeIntoSegment;
 
 const BATCH_SIZE: usize = 2;
 
@@ -23,20 +22,16 @@ pub const LargeSievePrimes = struct {
         self.list.deinit(allocator);
     }
 
+    // A large sieving prime's square is never within the segment where it
+    // was discovered (MEDIUM_LARGE_THRESHOLD is always well above
+    // sqrt(SEGMENT_ELEMS * 30) for any realistic cache-derived config), so
+    // unlike SmallSievePrimes.add(), there's nothing to cross off yet.
     pub fn add(
         self: *LargeSievePrimes,
         allocator: std.mem.Allocator,
-        comptime inBucketIndex: u3,
-        buckets: Types.SIEVE_BUCKETS_TYPE,
-        bucketsStart: usize,
-        bucketsEndExclusive: usize,
         sievePrime: SievePrime,
     ) !void {
-        var registered = sievePrime;
-        if (registered.currentBucketIndex < bucketsEndExclusive) {
-            applySievePrimeIntoSegment(inBucketIndex, buckets, bucketsStart, bucketsEndExclusive, &registered);
-        }
-        try self.list.append(allocator, registered);
+        try self.list.append(allocator, sievePrime);
     }
 
     pub fn activate(self: *LargeSievePrimes, bucketsEndExclusive: usize) void {
