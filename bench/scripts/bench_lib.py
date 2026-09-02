@@ -23,13 +23,17 @@ PHASES: dict[str, list[tuple[str, str]]] = {
         ("small", r"segmentIterator\.smallSievePrimes\.SmallSievePrimes\.apply"),
         ("medium", r"segmentIterator\.mediumSievePrimes\.MediumSievePrimes\.(apply|activate)"),
         ("large", r"segmentIterator\.largeSievePrimes\.LargeSievePrimes\.applyBatch"),
-        ("discovery", r"findSievePrimesInSegment"),
+        ("collecting", r"primes\.collectSegmentCount"),
     ],
     "primesieve": [
         ("presieve", r"PreSieve::"),
         ("small", r"EratSmall::"),
         ("medium", r"EratMedium::"),
         ("large", r"EratBig::"),
+        ("collecting", r"popcount"),
+    ],
+    "primal": [
+        ("collecting", r"hamming::weight"),
     ],
 }
 

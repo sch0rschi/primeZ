@@ -9,7 +9,7 @@ fn main() {
         .unwrap_or(DEFAULT_LIMIT);
 
     let t0 = Instant::now();
-    let count = primal::Sieve::new(limit).prime_pi(limit);
+    let count = primal::StreamingSieve::prime_pi(limit);
     let elapsed = t0.elapsed();
 
     println!("Seconds: {:.3}", elapsed.as_secs_f64());

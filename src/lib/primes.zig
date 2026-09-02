@@ -134,9 +134,7 @@ pub fn piSieveCounting(allocator: std.mem.Allocator, limit: u64) !usize {
     defer segmentIterator.deinit();
 
     while (try segmentIterator.next()) |segment| {
-        for (segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]) |container| {
-            count += @popCount(container);
-        }
+        count += collectSegmentCount(segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]);
     }
 
     const windowSize = segmentIterator.buckets.len;
@@ -152,6 +150,14 @@ pub fn piSieveCounting(allocator: std.mem.Allocator, limit: u64) !usize {
         count -= @popCount(lastContainer & tailMask);
     }
 
+    return count;
+}
+
+noinline fn collectSegmentCount(containers: []const Types.SIEVE_CONTAINER_TYPE) usize {
+    var count: usize = 0;
+    for (containers) |container| {
+        count += @popCount(container);
+    }
     return count;
 }
 

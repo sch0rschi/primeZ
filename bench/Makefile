@@ -1,4 +1,4 @@
-N ?= 100000000000
+N ?= 1000000000000
 PERF_FREQ ?= 999
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
 
@@ -75,14 +75,19 @@ primal-build:
 
 perf-primal: primal-build
 	@mkdir -p $(RESULTS)
-	@if [ -f $(RESULTS)/primal.perf.data ] && [ -f $(RESULTS)/primal.seconds ] && [ -f $(RESULTS)/primal.summary.txt ]; then \
+	@if [ -f $(RESULTS)/primal.perf.data ] && [ -f $(RESULTS)/primal.seconds ] && \
+	   [ -f $(RESULTS)/primal.report.txt ] && [ -f $(RESULTS)/primal.summary.txt ]; then \
 		echo "== primal: reusing cached results from a previous run (make clean to force a fresh one) =="; \
 		cat $(RESULTS)/primal.summary.txt; \
 	else \
 		echo "== recording primal (single-threaded, up to $(N)) =="; \
 		t=$$(python3 $(SCRIPTS)/record_and_time.py $(PERF_FREQ) $(RESULTS)/primal.perf.data -- $(PRIMAL_BIN) $(N)); \
 		echo "$$t" > $(RESULTS)/primal.seconds; \
-		echo "wall time: $${t}s" | tee $(RESULTS)/primal.summary.txt; \
+		echo "wall time: $${t}s"; \
+		echo; \
+		echo "== primal phase breakdown (self-time) =="; \
+		python3 $(SCRIPTS)/summarize.py primal $(RESULTS)/primal.perf.data "$$t" $(RESULTS)/primal.report.txt \
+			| tee $(RESULTS)/primal.summary.txt; \
 	fi
 
 bench: perf-primez perf-primesieve perf-primal compare
@@ -93,7 +98,8 @@ compare:
 	@python3 $(SCRIPTS)/compare.py \
 		$(RESULTS)/primez.report.txt "$$(cat $(RESULTS)/primez.seconds)" \
 		$(RESULTS)/primesieve.report.txt "$$(cat $(RESULTS)/primesieve.seconds)" \
-		"$$(cat $(RESULTS)/primal.seconds 2>/dev/null)"
+		"$$(cat $(RESULTS)/primal.seconds 2>/dev/null)" \
+		"$(RESULTS)/primal.report.txt"
 
 clean:
 	rm -rf $(ROOT)/zig-out $(ROOT)/.zig-cache $(RESULTS)
