@@ -1,5 +1,4 @@
-const std = @import("std");
-const Types = @import("types.zig");
+const Types = @import("sieveEngine/types.zig");
 
 pub fn primeCountUpperBound(n: Types.PRIME_TYPE) u64 {
     if (n < 2) return 0;

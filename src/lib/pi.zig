@@ -1,7 +1,5 @@
 const std = @import("std");
 
-const Estimates = @import("estimates.zig");
-const Types = @import("types.zig");
 const Primes = @import("primes.zig");
 
 const XCount = struct {
