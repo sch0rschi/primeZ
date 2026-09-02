@@ -76,16 +76,18 @@ def main() -> int:
     pz_phases = dict(PHASES["primez"])
     ps_phases = dict(PHASES["primesieve"])
 
+    pz_presieve = phase_pct(pz_rows, pz_phases["presieve"])
     pz_small = phase_pct(pz_rows, pz_phases["small"])
     pz_medium = phase_pct(pz_rows, pz_phases["medium"])
     pz_large = phase_pct(pz_rows, pz_phases["large"])
     pz_disc = phase_pct(pz_rows, pz_phases["discovery"])
-    pz_other = max(0.0, 100.0 - (pz_small + pz_medium + pz_large + pz_disc))
+    pz_other = max(0.0, 100.0 - (pz_presieve + pz_small + pz_medium + pz_large + pz_disc))
 
+    ps_presieve = phase_pct(ps_rows, ps_phases["presieve"])
     ps_small = phase_pct(ps_rows, ps_phases["small"])
     ps_medium = phase_pct(ps_rows, ps_phases["medium"])
     ps_large = phase_pct(ps_rows, ps_phases["large"])
-    ps_other = max(0.0, 100.0 - (ps_small + ps_medium + ps_large))
+    ps_other = max(0.0, 100.0 - (ps_presieve + ps_small + ps_medium + ps_large))
 
     def dashes(n: int) -> str:
         return "-" * n
@@ -101,6 +103,7 @@ def main() -> int:
         f"{dashes(PW):>{PW}} {dashes(SW):>{SW}}   {dashes(RW):>{RW}} | "
         f"{dashes(PSW):>{PSW}} {dashes(PRW):>{PRW}}"
     )
+    print(row("presieve", pz_presieve, ps_presieve, pz_total, ps_total))
     print(row("small", pz_small, ps_small, pz_total, ps_total))
     print(row("medium", pz_medium, ps_medium, pz_total, ps_total))
     print(row("large", pz_large, ps_large, pz_total, ps_total))

@@ -6,4 +6,6 @@
 /bench/results/
 /bench/scripts/__pycache__/
 
+/presieveOpt/
+
 /.idea/
