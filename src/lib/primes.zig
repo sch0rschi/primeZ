@@ -75,7 +75,7 @@ pub fn getPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) ![]Types
                 if (prime > limit) {
                     break :outer;
                 }
-                try primes.append(allocator, prime);
+                primes.appendAssumeCapacity(prime);
                 containerWorkingCopy &= containerWorkingCopy - 1;
             }
         }

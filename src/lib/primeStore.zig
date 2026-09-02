@@ -61,7 +61,7 @@ pub const PrimeStore = struct {
                     if (prime > primesLimitInclusive) {
                         continue :outer;
                     }
-                    try primes.append(allocator, prime);
+                    primes.appendAssumeCapacity(prime);
                     containerWorkingCopy &= containerWorkingCopy - 1;
                 }
             }
