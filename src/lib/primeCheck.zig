@@ -5,7 +5,6 @@
 // See: https://en.wikipedia.org/wiki/Miller–Rabin_primality_test#Testing_against_small_sets_of_bases
 
 const std = @import("std");
-const Comptimes = @import("comptimes.zig");
 
 fn modMulWithOverflow(a: u64, b: u64, m: u64) u64 {
     const aa: u128 = @intCast(a);

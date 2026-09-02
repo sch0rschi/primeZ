@@ -1,9 +1,9 @@
 const std = @import("std");
 
-const SegmentIterator = @import("segmentIterator/root.zig").SegmentIterator;
-const Types = @import("types.zig");
-const Utils = @import("utils.zig");
-const Comptimes = @import("comptimes.zig");
+const SegmentIterator = @import("sieveEngine/segmentIterator/root.zig").SegmentIterator;
+const Types = @import("sieveEngine/types.zig");
+const Utils = @import("sieveEngine/utils.zig");
+const Comptimes = @import("sieveEngine/comptimes.zig");
 const PrimeCheck = @import("primeCheck.zig");
 const Estimates = @import("estimates.zig");
 

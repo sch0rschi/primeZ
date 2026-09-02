@@ -1,7 +1,4 @@
-const std = @import("std");
-
-const Utils = @import("utils.zig");
-const Check = @import("primeCheck.zig");
+const Check = @import("../primeCheck.zig");
 const Types = @import("types.zig");
 const WheelShape = @import("buildUtils").WheelShape;
 

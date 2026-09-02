@@ -1,10 +1,10 @@
 const std = @import("std");
 
 const Estimates = @import("estimates.zig");
-const Comptimes = @import("comptimes.zig");
-const Utils = @import("utils.zig");
-const Types = @import("types.zig");
-const SegmentIterator = @import("segmentIterator/root.zig").SegmentIterator;
+const Comptimes = @import("sieveEngine/comptimes.zig");
+const Utils = @import("sieveEngine/utils.zig");
+const Types = @import("sieveEngine/types.zig");
+const SegmentIterator = @import("sieveEngine/segmentIterator/root.zig").SegmentIterator;
 const Pi = @import("pi.zig");
 
 /// Computes the nth prime, zero indexed.

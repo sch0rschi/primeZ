@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const Comptimes = @import("comptimes.zig");
+pub const Comptimes = @import("sieveEngine/comptimes.zig");
 pub const PrimeCheck = @import("primeCheck.zig");
 
 const Primes = @import("primes.zig");
