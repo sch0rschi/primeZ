@@ -2,6 +2,7 @@ const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
 const Utils = @import("../utils.zig");
+const PreSieve = @import("../preSieve.zig");
 const BuildUtils = @import("buildUtils");
 
 const SievePrimeMod = @import("sievePrime.zig");
@@ -50,8 +51,8 @@ pub const SegmentIterator = struct {
 
         const containers: Types.SIEVE_CONTAINERS_TYPE = std.mem.bytesAsSlice(u64, std.mem.sliceAsBytes(buckets));
 
-        @memset(buckets, std.math.maxInt(Types.SIEVE_BUCKET_TYPE));
-        buckets[0] = Comptimes.FIRST_BUCKET;
+        PreSieve.fill(buckets, 0);
+        @memcpy(buckets[0..PreSieve.OVERRIDE_BUCKET_COUNT], &PreSieve.OVERRIDE_BUCKETS);
 
         const rootPrime = std.math.sqrt(lowerLimitInclusive);
         const rootBucketExclusive = Utils.getSieveLength(rootPrime);
@@ -94,7 +95,7 @@ pub const SegmentIterator = struct {
             if (self.bucketsStart >= self.bucketsLength) {
                 return null;
             }
-            @memset(self.buckets, std.math.maxInt(Types.SIEVE_BUCKET_TYPE));
+            PreSieve.fill(self.buckets, self.bucketsStart);
         }
         self.started = true;
 
@@ -125,14 +126,16 @@ pub const SegmentIterator = struct {
                 const sievePrime = SievePrime.from(bucketIndex, inBucketIndex);
                 const prime = Utils.admissibleNumberFromBitIndex(@bitSizeOf(Types.SIEVE_BUCKET_TYPE) * bucketIndex + inBucketIndex);
 
-                inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-                    if (ari == inBucketIndex) {
-                        if (prime <= SMALL_MEDIUM_THRESHOLD) {
-                            try self.small.add(self.allocator, ari, self.buckets, self.bucketsStart, self.bucketsEndExclusive, sievePrime);
-                        } else if (prime <= MEDIUM_LARGE_THRESHOLD) {
-                            try self.medium.add(self.allocator, sievePrime);
-                        } else {
-                            try self.large.add(self.allocator, sievePrime);
+                if (!PreSieve.isPreSieved(prime)) {
+                    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+                        if (ari == inBucketIndex) {
+                            if (prime <= SMALL_MEDIUM_THRESHOLD) {
+                                try self.small.add(self.allocator, ari, self.buckets, self.bucketsStart, self.bucketsEndExclusive, sievePrime);
+                            } else if (prime <= MEDIUM_LARGE_THRESHOLD) {
+                                try self.medium.add(self.allocator, sievePrime);
+                            } else {
+                                try self.large.add(self.allocator, sievePrime);
+                            }
                         }
                     }
                 }

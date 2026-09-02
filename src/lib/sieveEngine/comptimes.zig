@@ -1,4 +1,3 @@
-const Check = @import("../primeCheck.zig");
 const Types = @import("types.zig");
 const WheelShape = @import("buildUtils").WheelShape;
 
@@ -17,8 +16,6 @@ pub const AdmissibleResidues = struct {
 
 pub const ADMISSIBLE_RESIDUES: AdmissibleResidues = buildAdmissibleResidues();
 
-pub const FIRST_BUCKET: Types.SIEVE_BUCKET_TYPE = buildFirstPrimeSieveElement();
-
 pub const WheelStep = struct {
     bitMask: u8,
     divMultiplicator: u8,
@@ -27,25 +24,6 @@ pub const WheelStep = struct {
 };
 
 pub const WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep = buildWheelPatterns();
-
-fn buildFirstPrimeSieveElement() Types.SIEVE_BUCKET_TYPE {
-    var firstPrimesSieveElement = 0;
-    var admissibleResiduesCount: Types.SIEVE_TYPE_SHIFT_TYPE = 0;
-    var pp = 1;
-    while (true) : (pp += 1) {
-        if (ADMISSIBLE_RESIDUES.check[pp % WHEEL_CIRCUMFERENCE]) {
-            if (Check.isPrime(pp)) {
-                firstPrimesSieveElement |= 1 << admissibleResiduesCount;
-            }
-            if (admissibleResiduesCount == @bitSizeOf(Types.SIEVE_BUCKET_TYPE) - 1) {
-                break;
-            }
-            admissibleResiduesCount += 1;
-        }
-    }
-
-    return firstPrimesSieveElement;
-}
 
 fn buildAdmissibleResidues() AdmissibleResidues {
     var position: usize = 0;

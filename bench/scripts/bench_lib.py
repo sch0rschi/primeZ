@@ -19,12 +19,14 @@ Row = tuple[float, str]
 # table, so the two can't drift out of sync as symbol names change.
 PHASES: dict[str, list[tuple[str, str]]] = {
     "primez": [
+        ("presieve", r"sieveEngine\.preSieve\.fill"),
         ("small", r"segmentIterator\.smallSievePrimes\.SmallSievePrimes\.apply"),
         ("medium", r"segmentIterator\.mediumSievePrimes\.MediumSievePrimes\.(apply|activate)"),
         ("large", r"segmentIterator\.largeSievePrimes\.LargeSievePrimes\.applyBatch"),
         ("discovery", r"findSievePrimesInSegment"),
     ],
     "primesieve": [
+        ("presieve", r"PreSieve::"),
         ("small", r"EratSmall::"),
         ("medium", r"EratMedium::"),
         ("large", r"EratBig::"),
