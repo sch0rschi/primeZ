@@ -3,18 +3,18 @@ const std = @import("std");
 const Types = @import("types.zig");
 const Comptimes = @import("comptimes.zig");
 const Check = @import("../primeCheck.zig");
+const BuildUtils = @import("buildUtils");
+const PresieveGroups = BuildUtils.PresieveGroups;
 
 const VEC_LEN = std.simd.suggestVectorLength(Types.SIEVE_BUCKET_TYPE) orelse 16;
 
-const GROUPS = [_][]const usize{
-    &[_]usize{ 13, 83, 97 },
-    &[_]usize{ 19, 61, 89 },
-    &[_]usize{ 23, 53, 79 },
-    &[_]usize{ 31, 43, 73 },
-    &[_]usize{ 7, 11, 17, 71 },
-    &[_]usize{ 29, 47, 67 },
-    &[_]usize{ 37, 41, 59 },
-};
+// Which [prime, prime, ...] grouping to use is resolved by build.zig
+// (resolvePresieveGroups): a solved config from `zig build
+// regen-presieve-groups` if one exists, else PresieveGroups.GROUPS
+// (primesieve's own grouping - see that file's docstring) as the default.
+// Either way it arrives here as a build option, not as a direct import of
+// PresieveGroups.GROUPS - see PRESIEVE_GROUPS in build.zig/sieveLayout.zig.
+const GROUPS = BuildUtils.PRESIEVE_GROUPS;
 
 const GROUP_COUNT = GROUPS.len;
 
@@ -36,34 +36,6 @@ fn flattenPrimes() [primeCount()]usize {
         }
     }
     return result;
-}
-
-fn periodOf(comptime primes: []const usize) usize {
-    var period: usize = 1;
-    for (primes) |p| period *= p;
-    return period;
-}
-
-fn computeGroupPattern(comptime primes: []const usize) [periodOf(primes)]Types.SIEVE_BUCKET_TYPE {
-    @setEvalBranchQuota(1 << 24);
-    const period = periodOf(primes);
-    var pattern = [_]Types.SIEVE_BUCKET_TYPE{std.math.maxInt(Types.SIEVE_BUCKET_TYPE)} ** period;
-
-    for (primes) |p| {
-        var multiple = p * p;
-        const sweepEnd = multiple + Comptimes.WHEEL_CIRCUMFERENCE * (period + p);
-        while (multiple < sweepEnd) : (multiple += p) {
-            const mod = multiple % Comptimes.WHEEL_CIRCUMFERENCE;
-            if (Comptimes.ADMISSIBLE_RESIDUES.check[mod]) {
-                const bucketIndex = multiple / Comptimes.WHEEL_CIRCUMFERENCE;
-                const inBucketIndex = Comptimes.ADMISSIBLE_RESIDUES.reverseMap[mod];
-                pattern[bucketIndex % period] &=
-                    ~(@as(Types.SIEVE_BUCKET_TYPE, 1) << @as(Types.SIEVE_TYPE_SHIFT_TYPE, @intCast(inBucketIndex)));
-            }
-        }
-    }
-
-    return pattern;
 }
 
 pub const OVERRIDE_BUCKET_COUNT = computeOverrideBucketCount();
@@ -95,16 +67,27 @@ fn computeOverrideBuckets() [OVERRIDE_BUCKET_COUNT]Types.SIEVE_BUCKET_TYPE {
 const PERIODS: [GROUP_COUNT]usize = blk: {
     var result: [GROUP_COUNT]usize = undefined;
     for (GROUPS, 0..) |primes, i| {
-        result[i] = periodOf(primes);
+        result[i] = PresieveGroups.periodOf(primes);
     }
     break :blk result;
 };
 
+// BuildUtils.PRESIEVE_PATTERNS_BLOB is genPreSievePatternsTool.zig's output
+// (build.zig's computePreSievePatternsBlob), one group's full AND-pattern
+// after another in GROUPS order - see that tool's docstring for why this
+// isn't computed here anymore (it used to be, inside a comptime-interpreted
+// loop, and was the dominant cost of a full `zig build`). This block is now
+// just pointer/length slicing over an already-comptime-known byte string,
+// not a crossing-off computation, so it stays cheap.
 const PATTERNS: [GROUP_COUNT][]const Types.SIEVE_BUCKET_TYPE = blk: {
     var result: [GROUP_COUNT][]const Types.SIEVE_BUCKET_TYPE = undefined;
-    for (GROUPS, 0..) |primes, i| {
-        const pattern = computeGroupPattern(primes);
-        result[i] = &pattern;
+    var offset: usize = 0;
+    for (PERIODS, 0..) |period, i| {
+        result[i] = BuildUtils.PRESIEVE_PATTERNS_BLOB[offset..][0..period];
+        offset += period;
+    }
+    if (offset != BuildUtils.PRESIEVE_PATTERNS_BLOB.len) {
+        @compileError("presieve_patterns_blob length doesn't match GROUPS - regenerate (stale zig-cache?)");
     }
     break :blk result;
 };

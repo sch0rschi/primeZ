@@ -4,6 +4,8 @@ const SieveLayoutMath = @import("sieveLayoutMath.zig");
 
 pub const WheelShape = @import("wheelShape.zig");
 
+pub const PresieveGroups = @import("presieveGroups.zig");
+
 pub const RESIDUE_CLASS_COUNT = WheelShape.RESIDUE_CLASS_COUNT;
 
 pub const SEGMENT_ELEMS: usize = SieveLayoutMath.segmentElems(config.opt_segment_size_in_kb);
@@ -14,3 +16,7 @@ pub const SMALL_MEDIUM_THRESHOLD: usize =
 pub const MEDIUM_LARGE_THRESHOLD: usize = SieveLayoutMath.mediumLargeThreshold(config.opt_segment_size_in_kb);
 
 pub const PRIME_COUNTS_BY_RESIDUE: [RESIDUE_CLASS_COUNT]usize = config.prime_counts_by_residue;
+
+pub const PRESIEVE_GROUPS: []const []const usize = config.presieve_groups;
+
+pub const PRESIEVE_PATTERNS_BLOB: []const u8 = config.presieve_patterns_blob;

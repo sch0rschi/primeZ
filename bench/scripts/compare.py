@@ -14,7 +14,7 @@ from pathlib import Path
 
 from bench_lib import PHASES, load_report, pct_to_seconds, phase_pct
 
-LW, PW, SW, RW, PRW = 11, 8, 9, 12, 13
+LW, PW, SW, RW, PRW = 15, 8, 9, 12, 13
 GROUP_W = PW + 1 + SW
 PS_GROUP_W = GROUP_W + 3 + RW
 PRIMAL_GROUP_W = GROUP_W + 3 + PRW
@@ -77,19 +77,30 @@ def main() -> int:
     pz_phases = dict(PHASES["primez"])
     ps_phases = dict(PHASES["primesieve"])
 
-    pz_presieve = phase_pct(pz_rows, pz_phases["presieve"])
-    pz_small = phase_pct(pz_rows, pz_phases["small"])
+    # presieve and small are reported *combined* here (not as separate
+    # rows the way summarize.py's single-tool breakdown does) because the
+    # presieve/small boundary isn't the same prime in both tools anymore:
+    # primesieve's PreSieve buffers stop at 97 (its own fixed 8-buffer
+    # table), while primeZ's presieveOpt-solved GROUPS currently reach
+    # much further (into the 100s-200s, see presieveOpt/solve.py). A
+    # per-phase comparison at that boundary would silently misattribute
+    # work primeZ moved from "small" into "presieve" as if primeZ's
+    # small-prime handling had gotten cheaper, when it's really just
+    # accounted for on the other side of a line that moved. presieve+small
+    # together - "cost of handling every sieving prime below the
+    # medium threshold, how ever it's split internally" - is the
+    # invariant, comparable quantity.
+    pz_presieve_small = phase_pct(pz_rows, pz_phases["presieve"]) + phase_pct(pz_rows, pz_phases["small"])
     pz_medium = phase_pct(pz_rows, pz_phases["medium"])
     pz_large = phase_pct(pz_rows, pz_phases["large"])
     pz_collecting = phase_pct(pz_rows, pz_phases["collecting"])
-    pz_other = max(0.0, 100.0 - (pz_presieve + pz_small + pz_medium + pz_large + pz_collecting))
+    pz_other = max(0.0, 100.0 - (pz_presieve_small + pz_medium + pz_large + pz_collecting))
 
-    ps_presieve = phase_pct(ps_rows, ps_phases["presieve"])
-    ps_small = phase_pct(ps_rows, ps_phases["small"])
+    ps_presieve_small = phase_pct(ps_rows, ps_phases["presieve"]) + phase_pct(ps_rows, ps_phases["small"])
     ps_medium = phase_pct(ps_rows, ps_phases["medium"])
     ps_large = phase_pct(ps_rows, ps_phases["large"])
     ps_collecting = phase_pct(ps_rows, ps_phases["collecting"])
-    ps_other = max(0.0, 100.0 - (ps_presieve + ps_small + ps_medium + ps_large + ps_collecting))
+    ps_other = max(0.0, 100.0 - (ps_presieve_small + ps_medium + ps_large + ps_collecting))
 
     primal_collecting_pct = None
     primal_collecting_seconds = None
@@ -113,8 +124,7 @@ def main() -> int:
         f"{dashes(PW):>{PW}} {dashes(SW):>{SW}}   {dashes(RW):>{RW}} | "
         f"{dashes(PW):>{PW}} {dashes(SW):>{SW}}   {dashes(PRW):>{PRW}}"
     )
-    print(row("presieve", pz_presieve, ps_presieve, pz_total, ps_total))
-    print(row("small", pz_small, ps_small, pz_total, ps_total))
+    print(row("presieve+small", pz_presieve_small, ps_presieve_small, pz_total, ps_total))
     print(row("medium", pz_medium, ps_medium, pz_total, ps_total))
     print(row("large", pz_large, ps_large, pz_total, ps_total))
     print(row("collecting", pz_collecting, ps_collecting, pz_total, ps_total,

@@ -1,0 +1,8 @@
+ortools>=9.10,<10
+# Pinned exactly, not >=: highspy 1.15.x bundles a HiGHS build whose ABI
+# collides with the HiGHS copy ortools statically links into libortools.so
+# (undefined symbol on import, either import order) - confirmed broken in a
+# clean venv on 1.15.0/1.15.1, confirmed working on 1.10.0-1.14.0. Re-test
+# this exact incompatibility (a clean venv, both packages, both import
+# orders) before ever bumping this pin.
+highspy==1.14.0
