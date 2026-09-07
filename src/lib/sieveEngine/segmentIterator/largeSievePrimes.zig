@@ -1,12 +1,41 @@
 const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
+const BuildUtils = @import("buildUtils");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
 
-const BATCH_SIZE: usize = 2;
+// applyNSievePrimesIntoSegment's fast path keeps 4 live values per batched
+// prime (a wheel-pattern pointer, initialBucketIndex, currentBucketIndex,
+// wheelStepIndex) in registers across the whole inner loop - a batch size
+// that overflows the architecture's real GPR count spills some of those to
+// the stack every iteration instead. On this machine (16 GPRs -> batch 3),
+// sweeping 2/3/4/5/6/8 at N=6e11 (2 repeats each) found 3 consistently ~2%
+// faster than the previous hardcoded 2, degrading smoothly above that as
+// batch size grows past what fits in registers - consistent with the
+// spilling theory. That margin didn't reproduce in a single N=1.2e12 run
+// (statistically tied with batch 2 there), most likely single-run noise at
+// that scale rather than the effect vanishing, but not independently
+// confirmed. The /5 divisor itself is carried over unchanged from an older
+// version of this codebase that used it for a differently-shaped tier
+// split; it hasn't been independently re-derived for the current one.
+const BATCH_SIZE: usize = BuildUtils.GENERAL_PURPOSE_REGISTER_COUNT / 5;
 
+// Primes above MEDIUM_LARGE_THRESHOLD (up to LARGE_HUGE_THRESHOLD, see
+// hugeSievePrimes.zig): a full wheel cycle doesn't reliably fit within a
+// single segment, but more than one individual wheel step still can - a
+// prime near the low end of this range can hit a segment several times.
+// Rather than a bulk-cycle batch loop (unhelpful here) or per-prime
+// comptime-specialized dispatch (measured no different from a flat
+// runtime-indexed layout at this tier's once-per-segment call frequency -
+// see project history), this batches BATCH_SIZE primes together and steps
+// them one wheel-step at a time in lockstep, so their independent loads/
+// stores can overlap instead of fully serializing per prime. Correct for
+// any prime magnitude above medium's own range regardless of exactly where
+// MEDIUM_LARGE_THRESHOLD/LARGE_HUGE_THRESHOLD sit - those only affect how
+// much of this algorithm's more-than-one-hit-per-segment capability
+// actually gets used.
 pub const LargeSievePrimes = struct {
     list: std.ArrayList(SievePrime),
     activeCount: usize,
@@ -22,10 +51,6 @@ pub const LargeSievePrimes = struct {
         self.list.deinit(allocator);
     }
 
-    // A large sieving prime's square is never within the segment where it
-    // was discovered (MEDIUM_LARGE_THRESHOLD is always well above
-    // sqrt(SEGMENT_ELEMS * 30) for any realistic cache-derived config), so
-    // unlike SmallSievePrimes.add(), there's nothing to cross off yet.
     pub fn add(
         self: *LargeSievePrimes,
         allocator: std.mem.Allocator,

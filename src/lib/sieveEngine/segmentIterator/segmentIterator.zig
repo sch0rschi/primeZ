@@ -11,12 +11,14 @@ const SievePrime = SievePrimeMod.SievePrime;
 const SmallSievePrimes = @import("smallSievePrimes.zig").SmallSievePrimes;
 const MediumSievePrimes = @import("mediumSievePrimes.zig").MediumSievePrimes;
 const LargeSievePrimes = @import("largeSievePrimes.zig").LargeSievePrimes;
+const HugeSievePrimes = @import("hugeSievePrimes.zig").HugeSievePrimes;
 
 const ALIGNMENT = std.mem.Alignment.@"8";
 
 const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
 const SMALL_MEDIUM_THRESHOLD: usize = BuildUtils.SMALL_MEDIUM_THRESHOLD;
 const MEDIUM_LARGE_THRESHOLD: usize = BuildUtils.MEDIUM_LARGE_THRESHOLD;
+const LARGE_HUGE_THRESHOLD: usize = BuildUtils.LARGE_HUGE_THRESHOLD;
 
 const Segment = struct {
     containerStart: usize,
@@ -40,6 +42,7 @@ pub const SegmentIterator = struct {
     small: SmallSievePrimes,
     medium: MediumSievePrimes,
     large: LargeSievePrimes,
+    huge: HugeSievePrimes,
 
     pub fn init(allocator: std.mem.Allocator, lowerLimitInclusive: usize) !SegmentIterator {
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(lowerLimitInclusive));
@@ -73,6 +76,7 @@ pub const SegmentIterator = struct {
             .small = try SmallSievePrimes.init(allocator),
             .medium = try MediumSievePrimes.init(allocator),
             .large = try LargeSievePrimes.init(allocator),
+            .huge = try HugeSievePrimes.init(allocator),
         };
     }
 
@@ -81,6 +85,7 @@ pub const SegmentIterator = struct {
         self.small.deinit(self.allocator);
         self.medium.deinit(self.allocator);
         self.large.deinit(self.allocator);
+        self.huge.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -106,6 +111,9 @@ pub const SegmentIterator = struct {
 
         self.large.activate(self.bucketsEndExclusive);
         self.large.apply(self.buckets, self.bucketsStart, self.bucketsEndExclusive);
+
+        self.huge.activate(self.bucketsEndExclusive);
+        self.huge.apply(self.buckets, self.bucketsStart, self.bucketsEndExclusive);
 
         if (self.bucketsStart < self.rootBucketIndexExclusive) {
             try self.findSievePrimesInSegment();
@@ -133,8 +141,10 @@ pub const SegmentIterator = struct {
                                 try self.small.add(self.allocator, ari, self.buckets, self.bucketsStart, self.bucketsEndExclusive, sievePrime);
                             } else if (prime <= MEDIUM_LARGE_THRESHOLD) {
                                 try self.medium.add(self.allocator, sievePrime);
-                            } else {
+                            } else if (prime <= LARGE_HUGE_THRESHOLD) {
                                 try self.large.add(self.allocator, sievePrime);
+                            } else {
+                                try self.huge.add(self.allocator, sievePrime);
                             }
                         }
                     }

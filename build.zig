@@ -77,7 +77,11 @@ pub fn build(b: *std.Build) void {
     options.addOption(
         [RESIDUE_CLASS_COUNT]usize,
         PRIME_COUNTS_BY_RESIDUE,
-        computePrimeCountsByResidue(b, l1_cache_size_in_kb, opt_segment_size_in_kb),
+        computePrimeCountsByResidue(
+            b,
+            SieveLayoutMath.smallMediumThreshold(l1_cache_size_in_kb, opt_segment_size_in_kb),
+            SieveLayoutMath.mediumLargeThreshold(opt_segment_size_in_kb),
+        ),
     );
     options.addOption([]const []const usize, PRESIEVE_GROUPS, presieve_groups);
     options.addOption([]const u8, PRESIEVE_PATTERNS_BLOB, presieve_patterns_blob);
@@ -100,7 +104,7 @@ pub fn build(b: *std.Build) void {
     test_options.addOption(
         [RESIDUE_CLASS_COUNT]usize,
         PRIME_COUNTS_BY_RESIDUE,
-        computePrimeCountsByResidue(b, 4, 4),
+        computePrimeCountsByResidue(b, SieveLayoutMath.smallMediumThreshold(4, 4), SieveLayoutMath.mediumLargeThreshold(4)),
     );
     test_options.addOption([]const []const usize, PRESIEVE_GROUPS, presieve_groups);
     test_options.addOption([]const u8, PRESIEVE_PATTERNS_BLOB, presieve_patterns_blob);
@@ -233,12 +237,9 @@ fn detectCacheSizeKiB(
 
 fn computePrimeCountsByResidue(
     b: *std.Build,
-    l1CacheSizeInKb: usize,
-    optSegmentSizeInKb: usize,
+    lowerExclusive: usize,
+    upperInclusive: usize,
 ) [RESIDUE_CLASS_COUNT]usize {
-    const lowerExclusive = SieveLayoutMath.smallMediumThreshold(l1CacheSizeInKb, optSegmentSizeInKb);
-    const upperInclusive = SieveLayoutMath.mediumLargeThreshold(optSegmentSizeInKb);
-
     const tool_path = b.pathFromRoot("buildUtils/countPrimesByResidueTool.zig");
 
     var code: u8 = undefined;
