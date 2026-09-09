@@ -2,6 +2,7 @@ const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
 const BuildUtils = @import("buildUtils");
+const Estimates = @import("../../estimates.zig");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
@@ -41,8 +42,15 @@ pub const LargeSievePrimes = struct {
     activeCount: usize,
 
     pub fn init(allocator: std.mem.Allocator) !LargeSievePrimes {
+        // Every large-tier prime is <= LARGE_HUGE_THRESHOLD, a fixed
+        // build-time constant - Estimates.primeCountUpperBound of it is a
+        // safe (if slightly generous - it bounds the whole [0, threshold]
+        // prefix, not just this tier's own slice above MEDIUM_LARGE_THRESHOLD)
+        // upper bound on this tier's population, letting add() use
+        // appendAssumeCapacity.
+        const capacity = Estimates.primeCountUpperBound(BuildUtils.LARGE_HUGE_THRESHOLD);
         return LargeSievePrimes{
-            .list = try std.ArrayList(SievePrime).initCapacity(allocator, 0),
+            .list = try std.ArrayList(SievePrime).initCapacity(allocator, capacity),
             .activeCount = 0,
         };
     }
@@ -51,12 +59,11 @@ pub const LargeSievePrimes = struct {
         self.list.deinit(allocator);
     }
 
-    pub noinline fn add(
+    pub fn add(
         self: *LargeSievePrimes,
-        allocator: std.mem.Allocator,
         sievePrime: SievePrime,
-    ) !void {
-        try self.list.append(allocator, sievePrime);
+    ) void {
+        self.list.appendAssumeCapacity(sievePrime);
     }
 
     /// See SmallSievePrimes.sortByPosition - same reasoning, same

@@ -2,11 +2,13 @@ const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
 const BuildUtils = @import("buildUtils");
+const Estimates = @import("../../estimates.zig");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
 
 const STRIPE_ELEMS: usize = BuildUtils.STRIPE_ELEMS;
+const SMALL_MEDIUM_THRESHOLD: usize = BuildUtils.SMALL_MEDIUM_THRESHOLD;
 
 // Only small sieving primes need this: their squares (and thus their first
 // multiple) routinely fall within the segment where they were discovered,
@@ -84,9 +86,15 @@ pub const SmallSievePrimes = struct {
     activeCounts: [Comptimes.ADMISSIBLE_RESIDUES.count]usize,
 
     pub fn init(allocator: std.mem.Allocator) !SmallSievePrimes {
+        // Every small-tier prime is <= SMALL_MEDIUM_THRESHOLD regardless of
+        // which of the 8 residues it falls in, so reserving the full
+        // (over-provisioned but safe) upper bound for each residue's own
+        // list lets add() use appendAssumeCapacity - same trick
+        // MediumSievePrimes' init() already relies on.
+        const capacity = Estimates.primeCountUpperBound(SMALL_MEDIUM_THRESHOLD);
         var map: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(SievePrime) = undefined;
         for (&map) |*list| {
-            list.* = try std.ArrayList(SievePrime).initCapacity(allocator, 0);
+            list.* = try std.ArrayList(SievePrime).initCapacity(allocator, capacity);
         }
 
         return SmallSievePrimes{
@@ -103,18 +111,17 @@ pub const SmallSievePrimes = struct {
 
     pub noinline fn add(
         self: *SmallSievePrimes,
-        allocator: std.mem.Allocator,
         comptime inBucketIndex: u3,
         buckets: Types.SIEVE_BUCKETS_TYPE,
         bucketsStart: usize,
         bucketsEndExclusive: usize,
         sievePrime: SievePrime,
-    ) !void {
+    ) void {
         var registered = sievePrime;
         if (registered.currentBucketIndex < bucketsEndExclusive) {
             applySievePrimeIntoSegment(inBucketIndex, buckets, bucketsStart, bucketsEndExclusive, &registered);
         }
-        try self.map[inBucketIndex].append(allocator, registered);
+        self.map[inBucketIndex].appendAssumeCapacity(registered);
     }
 
     /// activate()'s early-break scan assumes each of the 8 per-residue

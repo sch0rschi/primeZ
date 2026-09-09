@@ -48,7 +48,7 @@ pub const SegmentIterator = struct {
     // Explicit error set (rather than inferred `!SegmentIterator`) because
     // init() and discoverSievingPrimes() call each other recursively -
     // Zig can't infer an error set across a genuine call cycle.
-    pub fn init(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize) std.mem.Allocator.Error!SegmentIterator {
+    pub noinline fn init(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize) std.mem.Allocator.Error!SegmentIterator {
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(limitInclusive));
         const buckets = try allocator.alignedAlloc(
             Types.SIEVE_BUCKET_TYPE,
@@ -176,7 +176,7 @@ pub const SegmentIterator = struct {
 /// directly into the real (startInclusive-relative) tiers - see
 /// SievePrime.from and HugeSievePrimes' struct docstring for why this
 /// lands correctly (and cheaply) without a separate re-seed pass.
-fn discoverSievingPrimes(
+noinline fn discoverSievingPrimes(
     allocator: std.mem.Allocator,
     rootPrime: usize,
     startInclusive: usize,
@@ -212,17 +212,26 @@ fn discoverSievingPrimes(
                 inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
                     if (ari == inBucketIndex) {
                         if (prime <= SMALL_MEDIUM_THRESHOLD) {
-                            try small.add(allocator, ari, outputBuckets, outputBucketsStart, outputBucketsEndExclusive, sievePrime);
+                            small.add(ari, outputBuckets, outputBucketsStart, outputBucketsEndExclusive, sievePrime);
                         } else if (prime <= MEDIUM_LARGE_THRESHOLD) {
-                            try medium.add(allocator, sievePrime);
+                            medium.add(sievePrime);
                         } else if (prime <= LARGE_HUGE_THRESHOLD) {
-                            try large.add(allocator, sievePrime);
+                            large.add(sievePrime);
                         } else {
-                            try huge.add(allocator, sievePrime, outputBucketsStart);
+                            huge.add(sievePrime);
                         }
                     }
                 }
             }
         }
     }
+
+    // Every sieving prime is staged (see HugeSievePrimes.add) rather than
+    // placed directly - now that the exact population is known, this picks
+    // exact per-ring-slot capacities and does the real placement with
+    // appendAssumeCapacity instead of tens of millions of growable
+    // `.append()` calls (profiled as the dominant cost of a huge-magnitude
+    // range-start query once firstAdmissibleMultiple's own scan loop was
+    // fixed - see project memory huge_tier_bucket_list_idea).
+    try huge.finalizeDiscovery(allocator, outputBucketsStart);
 }

@@ -43,12 +43,14 @@ pub const MediumSievePrimes = struct {
     // was discovered (SMALL_MEDIUM_THRESHOLD is always well above
     // sqrt(SEGMENT_ELEMS * 30) for any realistic cache-derived config), so
     // unlike SmallSievePrimes.add(), there's nothing to cross off yet.
-    pub noinline fn add(
+    // appendAssumeCapacity is safe unconditionally: init() already reserves
+    // PRIME_COUNTS_BY_RESIDUE[ari] for every one of that ari's 8 wsi
+    // buckets, an upper bound on their combined population (see init()).
+    pub fn add(
         self: *MediumSievePrimes,
-        allocator: std.mem.Allocator,
         sievePrime: SievePrime,
-    ) !void {
-        try self.maps[sievePrime.initialInBucketIndex][sievePrime.wheelStepIndex].append(allocator, sievePrime);
+    ) void {
+        self.maps[sievePrime.initialInBucketIndex][sievePrime.wheelStepIndex].appendAssumeCapacity(sievePrime);
     }
 
     pub noinline fn apply(

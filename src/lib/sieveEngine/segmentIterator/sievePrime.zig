@@ -51,8 +51,21 @@ const AdmissibleMultiple = struct {
 ///
 /// admissible multiples of `prime` correspond exactly to k where
 /// gcd(k, 30) == 1 (since gcd(prime, 30) == 1, gcd(prime*k, 30) ==
-/// gcd(k, 30)) - so the smallest admissible k >= minK is found by a
-/// bounded scan (at most 29 steps, one admissible k in every run of 30).
+/// gcd(k, 30)) - so we need the smallest admissible k >= minK. Rather than
+/// a runtime scan (this used to be a `while` loop advancing k one step at
+/// a time until ADMISSIBLE_RESIDUES.check[k % 30] - profiled as the single
+/// hottest cost in a huge-magnitude range-start query, likely branch
+/// mispredicts from the data-dependent early-out, see project memory
+/// huge_tier_bucket_list_idea) this is a single table lookup:
+/// ADMISSIBLE_RESIDUES.reverseMap[r] is already, by construction (see
+/// buildAdmissibleResidues), the index of the smallest admissible residue
+/// >= r within [0, WHEEL_CIRCUMFERENCE) - true whether r itself is
+/// admissible or not, and never needs to wrap into the next cycle because
+/// WHEEL_CIRCUMFERENCE - 1 is always admissible (gcd(n, n-1) == 1 for any
+/// n, so the wheel's own top residue is always coprime to it). So
+/// ADMISSIBLE_RESIDUES.list[reverseMap[r]] - r is the exact delta to the
+/// next admissible k, in one lookup instead of an unbounded-looking scan.
+///
 /// The resuming wheelStepIndex is reverseMap[k % 30], not
 /// reverseMap[(prime*k) % 30]: WHEEL_PATTERNS' 8-entry rows are indexed by
 /// the k-th admissible k-value (not by the composite's own residue) - this
@@ -61,12 +74,14 @@ const AdmissibleMultiple = struct {
 /// mod 30 repeats every 8 admissible k's too). The prime^2 case (k = prime)
 /// is just this same formula with minRawNumberInclusive = 0.
 fn firstAdmissibleMultiple(prime: usize, minRawNumberInclusive: usize) AdmissibleMultiple {
-    var k = @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
-    while (!Comptimes.ADMISSIBLE_RESIDUES.check[k % Comptimes.WHEEL_CIRCUMFERENCE]) : (k += 1) {}
+    const k0 = @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
+    const r = k0 % Comptimes.WHEEL_CIRCUMFERENCE;
+    const wheelStepIndex = Comptimes.ADMISSIBLE_RESIDUES.reverseMap[r];
+    const k = k0 + (Comptimes.ADMISSIBLE_RESIDUES.list[wheelStepIndex] - r);
 
     const multiple = prime * k;
     return .{
         .bucketIndex = multiple / Comptimes.WHEEL_CIRCUMFERENCE,
-        .wheelStepIndex = @intCast(Comptimes.ADMISSIBLE_RESIDUES.reverseMap[k % Comptimes.WHEEL_CIRCUMFERENCE]),
+        .wheelStepIndex = @intCast(wheelStepIndex),
     };
 }
