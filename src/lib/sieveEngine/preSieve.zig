@@ -8,12 +8,6 @@ const PresieveGroups = BuildUtils.PresieveGroups;
 
 const VEC_LEN = std.simd.suggestVectorLength(Types.SIEVE_BUCKET_TYPE) orelse 16;
 
-// Which [prime, prime, ...] grouping to use is resolved by build.zig
-// (resolvePresieveGroups): a solved config from `zig build
-// regen-presieve-groups` if one exists, else PresieveGroups.GROUPS
-// (primesieve's own grouping - see that file's docstring) as the default.
-// Either way it arrives here as a build option, not as a direct import of
-// PresieveGroups.GROUPS - see PRESIEVE_GROUPS in build.zig/sieveLayout.zig.
 const GROUPS = BuildUtils.PRESIEVE_GROUPS;
 
 const GROUP_COUNT = GROUPS.len;
@@ -72,13 +66,6 @@ const PERIODS: [GROUP_COUNT]usize = blk: {
     break :blk result;
 };
 
-// BuildUtils.PRESIEVE_PATTERNS_BLOB is genPreSievePatternsTool.zig's output
-// (build.zig's computePreSievePatternsBlob), one group's full AND-pattern
-// after another in GROUPS order - see that tool's docstring for why this
-// isn't computed here anymore (it used to be, inside a comptime-interpreted
-// loop, and was the dominant cost of a full `zig build`). This block is now
-// just pointer/length slicing over an already-comptime-known byte string,
-// not a crossing-off computation, so it stays cheap.
 const PATTERNS: [GROUP_COUNT][]const Types.SIEVE_BUCKET_TYPE = blk: {
     var result: [GROUP_COUNT][]const Types.SIEVE_BUCKET_TYPE = undefined;
     var offset: usize = 0;
@@ -130,9 +117,12 @@ pub noinline fn fill(buckets: []Types.SIEVE_BUCKET_TYPE, bucketsStart: usize) vo
     }
 }
 
+const MAX_PRESIEVE_PRIME: usize = blk: {
+    var m: usize = 0;
+    for (PRIMES) |p| m = @max(m, p);
+    break :blk m;
+};
+
 pub fn isPreSieved(prime: usize) bool {
-    for (PRIMES) |p| {
-        if (p == prime) return true;
-    }
-    return false;
+    return prime <= MAX_PRESIEVE_PRIME;
 }

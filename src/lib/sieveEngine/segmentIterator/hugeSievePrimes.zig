@@ -135,7 +135,7 @@ pub const HugeSievePrimes = struct {
     /// later. `bucketsStart` is the position ring[ringHead] (still 0,
     /// nothing has been applied yet) represents - the real query's first
     /// output segment, see SegmentIterator.init.
-    pub fn finalizeDiscovery(self: *HugeSievePrimes, allocator: std.mem.Allocator, bucketsStart: usize) !void {
+    pub noinline fn finalizeDiscovery(self: *HugeSievePrimes, allocator: std.mem.Allocator, bucketsStart: usize) !void {
         const ringLen = self.ring.len;
 
         const counts = try allocator.alloc(usize, ringLen + 1); // counts[ringLen] == pending
@@ -151,6 +151,14 @@ pub const HugeSievePrimes = struct {
         }
         self.list = try std.ArrayList(SievePrime).initCapacity(allocator, counts[ringLen]);
 
+        // Profiled separately from the counting pass above (~4x costlier,
+        // see project memory huge_tier_bucket_list_idea): counting only
+        // ever touches the small, cache-resident `counts` array, while this
+        // pass writes each full SievePrime into whichever ring bucket (or
+        // pending) it belongs to - scattered across up to ring.len distinct
+        // buffers instead of one hot one. Inherent to doing a real
+        // counting-sort placement, not something the two-pass split itself
+        // costs - measured no win from avoiding it.
         for (self.staging.items) |sievePrime| {
             place(self.ring, &self.list, sievePrime, ringLen, bucketsStart);
         }
