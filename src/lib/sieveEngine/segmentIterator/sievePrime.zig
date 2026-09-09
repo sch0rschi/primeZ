@@ -8,38 +8,29 @@ pub const SievePrime = struct {
     initialInBucketIndex: u3,
     wheelStepIndex: u3,
 
-    pub fn from(bucketIndex: usize, inBucketIndex: u3) SievePrime {
+    /// Builds a SievePrime for the (bucketIndex, inBucketIndex)-encoded
+    /// prime, targeting its first admissible multiple that is >=
+    /// minRawNumberInclusive (never below prime^2 - smaller multiples are
+    /// always already handled by smaller sieving primes). Discovery always
+    /// finds primes via a 0-based scan (see SegmentIterator's nested
+    /// sieving-prime discovery), but the target this prime is first needed
+    /// at is computed directly relative to whatever range-start the caller
+    /// actually asked for - passing 0 here reduces to "first needed at
+    /// prime^2", the every-day case. There is deliberately no separate
+    /// "discover relative to 0, then re-seed relative to the real start"
+    /// step: computing the real target once, at discovery time, is exactly
+    /// as cheap as computing a throwaway one relative to 0 would have been
+    /// - see project memory huge_tier_bucket_list_idea for the history of
+    /// why this used to be a two-step process.
+    pub fn from(bucketIndex: usize, inBucketIndex: u3, minRawNumberInclusive: usize) SievePrime {
         const prime =
             Utils.admissibleNumberFromBitIndex(@bitSizeOf(Types.SIEVE_BUCKET_TYPE) * bucketIndex + inBucketIndex);
-        const target = firstAdmissibleMultiple(prime, 0);
+        const target = firstAdmissibleMultiple(prime, minRawNumberInclusive);
 
         return SievePrime{
             .currentBucketIndex = target.bucketIndex,
             .initialBucketIndex = @intCast(bucketIndex),
             .initialInBucketIndex = inBucketIndex,
-            .wheelStepIndex = target.wheelStepIndex,
-        };
-    }
-
-    /// Re-seeds this already-discovered SievePrime directly to the first
-    /// admissible multiple of its own prime that is >= rangeStartInclusive
-    /// (never below prime^2 - smaller multiples are always already handled
-    /// by smaller sieving primes), computed in O(1)-ish arithmetic rather
-    /// than by simulating every segment in between. Used by
-    /// SegmentIterator's range-start support to jump straight from the end
-    /// of sieving-prime discovery (always 0-based, see findSievePrimesInSegment)
-    /// to an arbitrary requested start, without touching every skipped
-    /// segment - see that file's docstring.
-    pub fn fastForwardTo(self: SievePrime, rangeStartInclusive: usize) SievePrime {
-        const prime = Utils.admissibleNumberFromBitIndex(
-            @bitSizeOf(Types.SIEVE_BUCKET_TYPE) * self.initialBucketIndex + self.initialInBucketIndex,
-        );
-        const target = firstAdmissibleMultiple(prime, rangeStartInclusive);
-
-        return SievePrime{
-            .currentBucketIndex = target.bucketIndex,
-            .initialBucketIndex = self.initialBucketIndex,
-            .initialInBucketIndex = self.initialInBucketIndex,
             .wheelStepIndex = target.wheelStepIndex,
         };
     }

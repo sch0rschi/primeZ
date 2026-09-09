@@ -239,12 +239,12 @@ test "piSieveCounting with a range start" {
     try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 122_879, 122_881);
     try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 122_880, 245_760);
 
-    // start well beyond a single segment's worth of numbers, but before
-    // sieving-prime discovery (sqrt(limit)) finishes - no jump
+    // start well beyond a single segment's worth of numbers, but well
+    // within sqrt(limit) itself
     try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 100_000, 200_000);
 
-    // start far beyond sqrt(limit) - triggers SegmentIterator's jump, and
-    // exercises small/medium/large tier fastForwardTo (see sievePrime.zig)
+    // start far beyond sqrt(limit) - exercises small/medium/large tiers'
+    // sortByPosition (see segmentIterator.zig's discoverSievingPrimes)
     try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 999_000, 1_000_000);
     try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 9_990_000, 10_000_000);
 

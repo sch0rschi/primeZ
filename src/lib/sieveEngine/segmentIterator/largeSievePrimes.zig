@@ -51,7 +51,7 @@ pub const LargeSievePrimes = struct {
         self.list.deinit(allocator);
     }
 
-    pub fn add(
+    pub noinline fn add(
         self: *LargeSievePrimes,
         allocator: std.mem.Allocator,
         sievePrime: SievePrime,
@@ -59,7 +59,14 @@ pub const LargeSievePrimes = struct {
         try self.list.append(allocator, sievePrime);
     }
 
-    pub fn activate(self: *LargeSievePrimes, bucketsEndExclusive: usize) void {
+    /// See SmallSievePrimes.sortByPosition - same reasoning, same
+    /// requirement to run once after discovery's add() calls and before
+    /// the first activate().
+    pub fn sortByPosition(self: *LargeSievePrimes) void {
+        std.mem.sortUnstable(SievePrime, self.list.items, {}, SievePrimeMod.lessThanByCurrentBucketIndex);
+    }
+
+    pub noinline fn activate(self: *LargeSievePrimes, bucketsEndExclusive: usize) void {
         for (self.list.items[self.activeCount..]) |sievePrime| {
             if (sievePrime.currentBucketIndex < bucketsEndExclusive) {
                 self.activeCount += 1;
@@ -67,20 +74,6 @@ pub const LargeSievePrimes = struct {
                 break;
             }
         }
-    }
-
-    /// Re-seeds every tracked prime (active or not) directly to its first
-    /// hit at/after rangeStartInclusive - see SegmentIterator's range-start
-    /// support. Re-sorting afterwards is required: fast-forwarding to a
-    /// common target no longer preserves the by-prime-value insertion order
-    /// activate()'s early-break scan (and this tier's own batching) depends
-    /// on being sorted by currentBucketIndex.
-    pub fn fastForwardTo(self: *LargeSievePrimes, rangeStartInclusive: usize) void {
-        for (self.list.items) |*sievePrime| {
-            sievePrime.* = sievePrime.fastForwardTo(rangeStartInclusive);
-        }
-        std.mem.sortUnstable(SievePrime, self.list.items, {}, SievePrimeMod.lessThanByCurrentBucketIndex);
-        self.activeCount = 0;
     }
 
     pub fn apply(

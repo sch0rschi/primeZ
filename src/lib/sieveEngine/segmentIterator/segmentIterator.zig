@@ -20,6 +20,8 @@ const SMALL_MEDIUM_THRESHOLD: usize = BuildUtils.SMALL_MEDIUM_THRESHOLD;
 const MEDIUM_LARGE_THRESHOLD: usize = BuildUtils.MEDIUM_LARGE_THRESHOLD;
 const LARGE_HUGE_THRESHOLD: usize = BuildUtils.LARGE_HUGE_THRESHOLD;
 
+const BUCKET_BITS = @bitSizeOf(Types.SIEVE_BUCKET_TYPE);
+
 const Segment = struct {
     containerStart: usize,
     containerEndExclusive: usize,
@@ -33,23 +35,6 @@ pub const SegmentIterator = struct {
     containers: []align(8) Types.SIEVE_CONTAINER_TYPE,
 
     bucketsLength: usize,
-    rootBucketIndexExclusive: usize,
-
-    // Where sieving-prime discovery ends and range-start support begins:
-    // discovery (findSievePrimesInSegment) is always 0-based and always
-    // runs in full up to rootBucketIndexExclusive - it's how sieving primes
-    // are found at all, so there's nothing to skip there even when
-    // startBucketIndex is astronomically larger. startBucketIndex itself is
-    // startInclusive's own bucket, rounded down to a multiple of 8 buckets
-    // (one container) so Segment.containerStart/containerEndExclusive
-    // below stay valid global container indices - see next()'s one-time
-    // jump. Callers that care about exactly startInclusive (not this
-    // slightly-earlier, container-aligned point) mask the difference off
-    // themselves, the same way callers already mask off the tail beyond
-    // limitInclusive (see Primes.piSieveCounting).
-    startInclusive: usize,
-    startBucketIndex: usize,
-    jumped: bool,
 
     bucketsStart: usize,
     bucketsEndExclusive: usize,
@@ -60,7 +45,10 @@ pub const SegmentIterator = struct {
     large: LargeSievePrimes,
     huge: HugeSievePrimes,
 
-    pub fn init(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize) !SegmentIterator {
+    // Explicit error set (rather than inferred `!SegmentIterator`) because
+    // init() and discoverSievingPrimes() call each other recursively -
+    // Zig can't infer an error set across a genuine call cycle.
+    pub fn init(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize) std.mem.Allocator.Error!SegmentIterator {
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(limitInclusive));
         const buckets = try allocator.alignedAlloc(
             Types.SIEVE_BUCKET_TYPE,
@@ -70,36 +58,70 @@ pub const SegmentIterator = struct {
 
         const containers: Types.SIEVE_CONTAINERS_TYPE = std.mem.bytesAsSlice(u64, std.mem.sliceAsBytes(buckets));
 
-        PreSieve.fill(buckets, 0);
-        @memcpy(buckets[0..PreSieve.OVERRIDE_BUCKET_COUNT], &PreSieve.OVERRIDE_BUCKETS);
+        const startBucketIndex = ALIGNMENT.backward(startInclusive / Comptimes.WHEEL_CIRCUMFERENCE);
+        const bucketsEndExclusive = @min(startBucketIndex + SEGMENT_ELEMS, bucketsLength);
+
+        PreSieve.fill(buckets, startBucketIndex);
+        // OVERRIDE_BUCKETS fixes up the presieve pattern's own base primes
+        // (which the pattern otherwise zeroes out as "multiples of
+        // themselves") - only valid for the segment actually containing
+        // position 0, since it's computed in absolute (0-based) terms.
+        if (startBucketIndex == 0) {
+            @memcpy(buckets[0..PreSieve.OVERRIDE_BUCKET_COUNT], &PreSieve.OVERRIDE_BUCKETS);
+        }
 
         const rootPrime = std.math.sqrt(limitInclusive);
-        const rootBucketExclusive = Utils.getSieveLength(rootPrime);
 
-        const startBucketIndex = ALIGNMENT.backward(startInclusive / Comptimes.WHEEL_CIRCUMFERENCE);
-
-        return SegmentIterator{
+        var self = SegmentIterator{
             .allocator = allocator,
 
             .buckets = buckets,
             .containers = containers,
 
             .bucketsLength = bucketsLength,
-            .rootBucketIndexExclusive = rootBucketExclusive,
 
-            .startInclusive = startInclusive,
-            .startBucketIndex = startBucketIndex,
-            .jumped = false,
-
-            .bucketsStart = 0,
-            .bucketsEndExclusive = @min(SEGMENT_ELEMS, bucketsLength),
+            .bucketsStart = startBucketIndex,
+            .bucketsEndExclusive = bucketsEndExclusive,
             .started = false,
 
             .small = try SmallSievePrimes.init(allocator),
             .medium = try MediumSievePrimes.init(allocator),
             .large = try LargeSievePrimes.init(allocator),
-            .huge = try HugeSievePrimes.init(allocator),
+            .huge = try HugeSievePrimes.init(allocator, rootPrime),
         };
+
+        // Sieving-prime discovery is fully decoupled from the output walk
+        // (see discoverSievingPrimes): every prime up to rootPrime is found
+        // via its own, always-0-based nested sieve, and filed directly at
+        // its true target position relative to startInclusive - no
+        // "discover relative to 0, then jump/re-seed relative to the real
+        // start" two-step (see project memory huge_tier_bucket_list_idea).
+        // Must run after buckets/PreSieve above are ready: small-tier
+        // filing crosses off immediately when a prime's target lands
+        // within this very first output segment.
+        try discoverSievingPrimes(
+            allocator,
+            rootPrime,
+            startInclusive,
+            &self.small,
+            &self.medium,
+            &self.large,
+            &self.huge,
+            self.buckets,
+            self.bucketsStart,
+            self.bucketsEndExclusive,
+        );
+        // Discovery files primes in increasing prime-value order, not
+        // increasing target-position order (see sortByPosition) - restore
+        // the sorted-by-currentBucketIndex invariant activate() depends on
+        // before the first next() call. Medium has no such invariant (its
+        // apply() always walks every tracked prime, see its own docstring)
+        // and huge's ring/pending never needed one either (see its struct
+        // docstring), so only small/large need this.
+        self.small.sortByPosition();
+        self.large.sortByPosition();
+
+        return self;
     }
 
     pub fn deinit(self: *SegmentIterator) void {
@@ -111,31 +133,14 @@ pub const SegmentIterator = struct {
         self.* = undefined;
     }
 
-    pub fn next(self: *SegmentIterator) !?Segment {
+    pub noinline fn next(self: *SegmentIterator) !?Segment {
         if (!self.started) {
             if (self.bucketsStart >= self.bucketsLength) {
                 return null;
             }
             self.started = true;
         } else {
-            var candidateBucketsStart = self.bucketsStart + SEGMENT_ELEMS;
-
-            // One-time jump: once discovery (0-based, up through
-            // rootBucketIndexExclusive) is done, and the requested start
-            // lies beyond the segment we'd otherwise process next, skip
-            // straight to it instead of simulating every segment in
-            // between - see fastForwardTo on each tier.
-            if (!self.jumped and candidateBucketsStart >= self.rootBucketIndexExclusive) {
-                self.jumped = true;
-                if (self.startBucketIndex > candidateBucketsStart) {
-                    self.small.fastForwardTo(self.startInclusive);
-                    self.medium.fastForwardTo(self.startInclusive);
-                    self.large.fastForwardTo(self.startInclusive);
-                    self.huge.fastForwardTo(self.startInclusive);
-                    candidateBucketsStart = self.startBucketIndex;
-                }
-            }
-
+            const candidateBucketsStart = self.bucketsStart + SEGMENT_ELEMS;
             if (candidateBucketsStart >= self.bucketsLength) {
                 return null;
             }
@@ -152,12 +157,8 @@ pub const SegmentIterator = struct {
         self.large.activate(self.bucketsEndExclusive);
         self.large.apply(self.buckets, self.bucketsStart, self.bucketsEndExclusive);
 
-        self.huge.activate(self.bucketsEndExclusive);
-        self.huge.apply(self.buckets, self.bucketsStart, self.bucketsEndExclusive);
-
-        if (self.bucketsStart < self.rootBucketIndexExclusive) {
-            try self.findSievePrimesInSegment();
-        }
+        try self.huge.activate(self.allocator, self.bucketsStart);
+        try self.huge.apply(self.allocator, self.buckets, self.bucketsStart, self.bucketsEndExclusive);
 
         return Segment{
             .containerStart = self.bucketsStart / 8,
@@ -165,39 +166,63 @@ pub const SegmentIterator = struct {
             .containers = self.containers,
         };
     }
+};
 
-    fn findSievePrimesInSegment(self: *SegmentIterator) !void {
-        for (self.bucketsStart..@min(self.rootBucketIndexExclusive, self.bucketsEndExclusive)) |bucketIndex| {
-            // self.buckets is the reused, segment-local buffer (LOCAL index
-            // = GLOBAL bucketIndex - bucketsStart) - this only ever
-            // coincided with the global index before because discovery
-            // finishing within segment 0 (bucketsStart == 0) was the only
-            // case ever exercised; range-start's multi-segment discovery
-            // (see next()) is the first thing to reach a later segment here.
-            var bucketWorkingCopy = self.buckets[bucketIndex - self.bucketsStart];
-            while (bucketWorkingCopy != 0) {
-                const inBucketIndex: u3 = Utils.lsb(bucketWorkingCopy);
-                const sievePrime = SievePrime.from(bucketIndex, inBucketIndex);
-                const prime = Utils.admissibleNumberFromBitIndex(@bitSizeOf(Types.SIEVE_BUCKET_TYPE) * bucketIndex + inBucketIndex);
+/// Finds every sieving prime up to and including rootPrime, via its own
+/// always-0-based nested SegmentIterator (bottoms out fast: rootPrime's own
+/// discovery needs primes only up to sqrt(rootPrime), and so on - this
+/// shrinks below 2 within a handful of levels for any u64 input, mirroring
+/// primesieve's tinySieve/SievingPrimes bootstrap), and files each one
+/// directly into the real (startInclusive-relative) tiers - see
+/// SievePrime.from and HugeSievePrimes' struct docstring for why this
+/// lands correctly (and cheaply) without a separate re-seed pass.
+fn discoverSievingPrimes(
+    allocator: std.mem.Allocator,
+    rootPrime: usize,
+    startInclusive: usize,
+    small: *SmallSievePrimes,
+    medium: *MediumSievePrimes,
+    large: *LargeSievePrimes,
+    huge: *HugeSievePrimes,
+    outputBuckets: Types.SIEVE_BUCKETS_TYPE,
+    outputBucketsStart: usize,
+    outputBucketsEndExclusive: usize,
+) std.mem.Allocator.Error!void {
+    if (rootPrime < 2) return;
 
-                if (!PreSieve.isPreSieved(prime)) {
-                    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-                        if (ari == inBucketIndex) {
-                            if (prime <= SMALL_MEDIUM_THRESHOLD) {
-                                try self.small.add(self.allocator, ari, self.buckets, self.bucketsStart, self.bucketsEndExclusive, sievePrime);
-                            } else if (prime <= MEDIUM_LARGE_THRESHOLD) {
-                                try self.medium.add(self.allocator, sievePrime);
-                            } else if (prime <= LARGE_HUGE_THRESHOLD) {
-                                try self.large.add(self.allocator, sievePrime);
-                            } else {
-                                try self.huge.add(self.allocator, sievePrime);
-                            }
+    var nested = try SegmentIterator.init(allocator, 0, rootPrime);
+    defer nested.deinit();
+
+    outer: while (try nested.next()) |segment| {
+        for (segment.containerStart..segment.containerEndExclusive, segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]) |containerIndex, container| {
+            var containerWorkingCopy: u64 = container;
+            while (containerWorkingCopy != 0) {
+                const inContainerIndex: u6 = @intCast(@ctz(containerWorkingCopy));
+                containerWorkingCopy &= containerWorkingCopy - 1;
+
+                const bitIndex = 64 * containerIndex + inContainerIndex;
+                const prime = Utils.admissibleNumberFromBitIndex(bitIndex);
+                if (prime > rootPrime) break :outer;
+                if (PreSieve.isPreSieved(prime)) continue;
+
+                const bucketIndex = bitIndex / BUCKET_BITS;
+                const inBucketIndex: u3 = @intCast(bitIndex % BUCKET_BITS);
+                const sievePrime = SievePrime.from(bucketIndex, inBucketIndex, startInclusive);
+
+                inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+                    if (ari == inBucketIndex) {
+                        if (prime <= SMALL_MEDIUM_THRESHOLD) {
+                            try small.add(allocator, ari, outputBuckets, outputBucketsStart, outputBucketsEndExclusive, sievePrime);
+                        } else if (prime <= MEDIUM_LARGE_THRESHOLD) {
+                            try medium.add(allocator, sievePrime);
+                        } else if (prime <= LARGE_HUGE_THRESHOLD) {
+                            try large.add(allocator, sievePrime);
+                        } else {
+                            try huge.add(allocator, sievePrime, outputBucketsStart);
                         }
                     }
                 }
-
-                bucketWorkingCopy &= bucketWorkingCopy - 1;
             }
         }
     }
-};
+}

@@ -43,36 +43,12 @@ pub const MediumSievePrimes = struct {
     // was discovered (SMALL_MEDIUM_THRESHOLD is always well above
     // sqrt(SEGMENT_ELEMS * 30) for any realistic cache-derived config), so
     // unlike SmallSievePrimes.add(), there's nothing to cross off yet.
-    pub fn add(
+    pub noinline fn add(
         self: *MediumSievePrimes,
         allocator: std.mem.Allocator,
         sievePrime: SievePrime,
     ) !void {
         try self.maps[sievePrime.initialInBucketIndex][sievePrime.wheelStepIndex].append(allocator, sievePrime);
-    }
-
-    /// Medium has no active/inactive split (apply() always walks every
-    /// tracked prime, see that function) but is double-keyed by
-    /// (initialInBucketIndex, wheelStepIndex) for its comptime-specialized
-    /// bulk loop - unlike the other three tiers' fastForwardTo, a
-    /// fast-forwarded prime's wheelStepIndex generally DOES change, so it
-    /// must be rebucketed rather than just re-sorted in place. Reuses the
-    /// existing maps/mapsSwap double-buffer machinery apply() already
-    /// swaps every call, so no extra allocation is needed here - same
-    /// appendAssumeCapacity guarantee apply()'s own re-bucketing already
-    /// relies on (each ari's total population across its 8 wsi buckets
-    /// never exceeds PRIME_COUNTS_BY_RESIDUE[ari], see init()).
-    pub fn fastForwardTo(self: *MediumSievePrimes, rangeStartInclusive: usize) void {
-        for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-            for (0..WHEEL_STEP_COUNT) |wsi| {
-                for (self.maps[ari][wsi].items) |sievePrime| {
-                    const forwarded = sievePrime.fastForwardTo(rangeStartInclusive);
-                    self.mapsSwap[ari][forwarded.wheelStepIndex].appendAssumeCapacity(forwarded);
-                }
-                self.maps[ari][wsi].clearRetainingCapacity();
-            }
-        }
-        std.mem.swap(SievePrimesMap, &self.maps, &self.mapsSwap);
     }
 
     pub noinline fn apply(

@@ -20,9 +20,25 @@ Row = tuple[float, str]
 PHASES: dict[str, list[tuple[str, str]]] = {
     "primez": [
         ("presieve", r"sieveEngine\.preSieve\.fill"),
-        ("small", r"segmentIterator\.smallSievePrimes\.SmallSievePrimes\.apply"),
-        ("medium", r"segmentIterator\.mediumSievePrimes\.MediumSievePrimes\.(apply|activate)"),
-        ("large", r"segmentIterator\.largeSievePrimes\.LargeSievePrimes\.applyBatch"),
+        ("small.apply", r"segmentIterator\.smallSievePrimes\.SmallSievePrimes\.apply"),
+        ("small.add", r"segmentIterator\.smallSievePrimes\.SmallSievePrimes\.add"),
+        ("small.activate", r"segmentIterator\.smallSievePrimes\.SmallSievePrimes\.activate"),
+        ("medium.apply", r"segmentIterator\.mediumSievePrimes\.MediumSievePrimes\.apply"),
+        ("medium.add", r"segmentIterator\.mediumSievePrimes\.MediumSievePrimes\.add"),
+        ("large.apply", r"segmentIterator\.largeSievePrimes\.LargeSievePrimes\.applyBatch"),
+        ("large.add", r"segmentIterator\.largeSievePrimes\.LargeSievePrimes\.add"),
+        ("large.activate", r"segmentIterator\.largeSievePrimes\.LargeSievePrimes\.activate"),
+        ("huge.apply", r"segmentIterator\.hugeSievePrimes\.HugeSievePrimes\.apply"),
+        ("huge.add", r"segmentIterator\.hugeSievePrimes\.HugeSievePrimes\.add"),
+        ("huge.activate", r"segmentIterator\.hugeSievePrimes\.HugeSievePrimes\.activate"),
+        # discovery (SegmentIterator.init + its nested discoverSievingPrimes,
+        # inlined into init's own symbol) now does all sieving-prime lookup
+        # AND filing - there's no separate discover-then-reseed pass anymore,
+        # see project memory huge_tier_bucket_list_idea.
+        ("discovery", r"segmentIterator\.SegmentIterator\.init\b"),
+        ("iterator-next", r"segmentIterator\.SegmentIterator\.next\b"),
+        ("sieveprime-append", r"array_list\.Aligned\(sieveEngine\.segmentIterator\.sievePrime\.SievePrime"),
+        ("sort", r"mem\.sortUnstable|sort\.pdq"),
         ("collecting", r"primes\.collectSegmentCount"),
     ],
     "primesieve": [

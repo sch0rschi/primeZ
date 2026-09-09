@@ -101,7 +101,7 @@ pub const SmallSievePrimes = struct {
         }
     }
 
-    pub fn add(
+    pub noinline fn add(
         self: *SmallSievePrimes,
         allocator: std.mem.Allocator,
         comptime inBucketIndex: u3,
@@ -117,7 +117,24 @@ pub const SmallSievePrimes = struct {
         try self.map[inBucketIndex].append(allocator, registered);
     }
 
-    pub fn activate(self: *SmallSievePrimes, bucketsEndExclusive: usize) void {
+    /// activate()'s early-break scan assumes each of the 8 per-residue
+    /// lists is sorted by currentBucketIndex. Discovery files primes in
+    /// increasing prime-value order, which only coincides with increasing
+    /// currentBucketIndex order when every target is computed relative to
+    /// 0 (prime^2 is monotonic in prime); SegmentIterator's nested
+    /// discovery instead computes each target directly relative to the
+    /// real requested start (see SievePrime.from), and
+    /// firstAdmissibleMultiple's jitter for that isn't monotonic in prime
+    /// - a bigger prime can land earlier than a smaller one aimed at the
+    /// same start. Must be called once, after all discovery add() calls
+    /// and before the first activate(), to restore that invariant.
+    pub fn sortByPosition(self: *SmallSievePrimes) void {
+        for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+            std.mem.sortUnstable(SievePrime, self.map[ari].items, {}, SievePrimeMod.lessThanByCurrentBucketIndex);
+        }
+    }
+
+    pub noinline fn activate(self: *SmallSievePrimes, bucketsEndExclusive: usize) void {
         for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
             const pending = self.map[ari].items[self.activeCounts[ari]..];
             for (pending) |sievePrime| {
@@ -127,20 +144,6 @@ pub const SmallSievePrimes = struct {
                     break;
                 }
             }
-        }
-    }
-
-    /// See LargeSievePrimes.fastForwardTo - same reasoning; each of the 8
-    /// per-residue lists is re-sorted independently (a fast-forwarded prime
-    /// never changes which of the 8 lists it belongs in - that's keyed by
-    /// initialInBucketIndex, which fastForwardTo never touches).
-    pub fn fastForwardTo(self: *SmallSievePrimes, rangeStartInclusive: usize) void {
-        for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-            for (self.map[ari].items) |*sievePrime| {
-                sievePrime.* = sievePrime.fastForwardTo(rangeStartInclusive);
-            }
-            std.mem.sortUnstable(SievePrime, self.map[ari].items, {}, SievePrimeMod.lessThanByCurrentBucketIndex);
-            self.activeCounts[ari] = 0;
         }
     }
 
