@@ -1,4 +1,3 @@
-const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
 const Utils = @import("../utils.zig");
 
@@ -9,7 +8,12 @@ pub const SievePrime = struct {
     wheelStepIndex: u3,
 
     /// Builds a SievePrime for the (bucketIndex, inBucketIndex)-encoded
-    /// prime, targeting its first admissible multiple that is >=
+    /// prime (its own numeric value passed in as `prime` - the caller
+    /// already has it, from the very same bit-scan that produced
+    /// bucketIndex/inBucketIndex, to classify which tier it belongs in and
+    /// check PreSieve.isPreSieved - recomputing it here via
+    /// admissibleNumberFromBitIndex would be a second division-plus-lookup
+    /// for no reason), targeting its first admissible multiple that is >=
     /// minRawNumberInclusive (never below prime^2 - smaller multiples are
     /// always already handled by smaller sieving primes). Discovery always
     /// finds primes via a 0-based scan (see SegmentIterator's nested
@@ -22,9 +26,7 @@ pub const SievePrime = struct {
     /// as cheap as computing a throwaway one relative to 0 would have been
     /// - see project memory huge_tier_bucket_list_idea for the history of
     /// why this used to be a two-step process.
-    pub fn from(bucketIndex: usize, inBucketIndex: u3, minRawNumberInclusive: usize) SievePrime {
-        const prime =
-            Utils.admissibleNumberFromBitIndex(@bitSizeOf(Types.SIEVE_BUCKET_TYPE) * bucketIndex + inBucketIndex);
+    pub fn from(prime: usize, bucketIndex: usize, inBucketIndex: u3, minRawNumberInclusive: usize) SievePrime {
         const target = firstAdmissibleMultiple(prime, minRawNumberInclusive);
 
         return SievePrime{

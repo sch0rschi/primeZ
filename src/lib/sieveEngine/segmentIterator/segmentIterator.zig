@@ -207,7 +207,7 @@ noinline fn discoverSievingPrimes(
 
                 const bucketIndex = bitIndex / BUCKET_BITS;
                 const inBucketIndex: u3 = @intCast(bitIndex % BUCKET_BITS);
-                const sievePrime = SievePrime.from(bucketIndex, inBucketIndex, startInclusive);
+                const sievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, startInclusive);
 
                 inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
                     if (ari == inBucketIndex) {
