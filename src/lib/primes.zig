@@ -17,7 +17,7 @@ pub fn nthPrime(allocator: std.mem.Allocator, nth: usize) !Types.PRIME_TYPE {
 
     const nthPrimeUpperBound = Estimates.nthPrimeUpperBound(nth);
 
-    var segmentIterator = try SegmentIterator.init(allocator, nthPrimeUpperBound);
+    var segmentIterator = try SegmentIterator.init(allocator, 0, nthPrimeUpperBound);
     defer segmentIterator.deinit();
 
     var primeCount: usize = 2;
@@ -63,7 +63,7 @@ pub fn getPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) ![]Types
     var primes = try std.ArrayList(Types.PRIME_TYPE).initCapacity(allocator, amountUpperBound);
     try primes.appendSlice(allocator, &Comptimes.WHEEL_PRIMES);
 
-    var segmentIterator = try SegmentIterator.init(allocator, limit);
+    var segmentIterator = try SegmentIterator.init(allocator, 0, limit);
     defer segmentIterator.deinit();
 
     outer: while (try segmentIterator.next()) |segment| {
@@ -97,7 +97,7 @@ pub fn sumPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Types.P
     }
     var sum: Types.PRIME_TYPE = 10; // 2 + 3 + 5
 
-    var segmentIterator = try SegmentIterator.init(allocator, limit);
+    var segmentIterator = try SegmentIterator.init(allocator, 0, limit);
     defer segmentIterator.deinit();
 
     outer: while (try segmentIterator.next()) |segment| {
@@ -118,28 +118,55 @@ pub fn sumPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Types.P
     return sum;
 }
 
-pub fn piSieveCounting(allocator: std.mem.Allocator, limit: u64) !usize {
-    if (limit < 2) {
+/// Counts primes in [start, limit] (both inclusive). start defaults to 0
+/// for "count all primes up to limit" (pass 0 explicitly).
+///
+/// When start is far beyond limit's own sqrt, SegmentIterator skips
+/// straight from the end of sieving-prime discovery to start's segment
+/// instead of simulating every segment in between (see its own docstring)
+/// - counting a narrow, huge-magnitude range is fast, not just a narrow
+/// window into an otherwise full sieve from 0.
+pub fn piSieveCounting(allocator: std.mem.Allocator, start: u64, limit: u64) !usize {
+    if (limit < 2 or start > limit) {
         return 0;
-    } else if (limit < 3) {
-        return 1;
-    } else if (limit < 5) {
-        return 2;
-    } else if (limit < 7) {
-        return 3;
     }
-    var count: usize = 3;
 
-    var segmentIterator = try SegmentIterator.init(allocator, limit);
+    var count: usize = 0;
+    inline for (Comptimes.WHEEL_PRIMES) |p| {
+        if (p >= start and p <= limit) count += 1;
+    }
+
+    const lastWheelPrime = Comptimes.WHEEL_PRIMES[Comptimes.WHEEL_PRIMES.len - 1];
+    const sieveFrom = @max(start, lastWheelPrime + 1);
+    if (sieveFrom > limit) {
+        return count;
+    }
+
+    var segmentIterator = try SegmentIterator.init(allocator, sieveFrom, limit);
     defer segmentIterator.deinit();
 
+    // Bits before sieveFrom's own admissible position must not be counted,
+    // even within the first segment actually yielded (which - thanks to
+    // SegmentIterator's container-alignment on jump - starts at most one
+    // container's worth of admissible numbers before sieveFrom, but for a
+    // small/no-jump range could be anywhere earlier in that segment).
+    const precedingCount = if (sieveFrom == 0) 0 else Utils.admissibleCountUpTo(sieveFrom - 1);
+    const headContainerIndex = precedingCount / 64;
+    const headMask: Types.SIEVE_CONTAINER_TYPE = ~@as(Types.SIEVE_CONTAINER_TYPE, 0) << @intCast(precedingCount % 64);
+
     while (try segmentIterator.next()) |segment| {
-        count += collectSegmentCount(segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]);
+        if (segment.containerStart <= headContainerIndex) {
+            for (segment.containerStart..segment.containerEndExclusive, segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]) |containerIndex, container| {
+                if (containerIndex < headContainerIndex) continue;
+                const masked = if (containerIndex == headContainerIndex) container & headMask else container;
+                count += @popCount(masked);
+            }
+        } else {
+            count += collectSegmentCount(segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]);
+        }
     }
 
-    const windowSize = segmentIterator.buckets.len;
-    const finalSegmentStart = ((segmentIterator.bucketsLength - 1) / windowSize) * windowSize;
-    const lastContainerLocalIndex = (segmentIterator.bucketsLength - finalSegmentStart) / 8 - 1;
+    const lastContainerLocalIndex = (segmentIterator.bucketsEndExclusive - segmentIterator.bucketsStart) / 8 - 1;
     const lastContainer = segmentIterator.containers[lastContainerLocalIndex];
 
     const validBitCount = Utils.admissibleCountUpTo(limit);

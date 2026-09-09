@@ -45,6 +45,15 @@ pub const HugeSievePrimes = struct {
         }
     }
 
+    /// See LargeSievePrimes.fastForwardTo - same reasoning, same tier shape.
+    pub fn fastForwardTo(self: *HugeSievePrimes, rangeStartInclusive: usize) void {
+        for (self.list.items) |*sievePrime| {
+            sievePrime.* = sievePrime.fastForwardTo(rangeStartInclusive);
+        }
+        std.mem.sortUnstable(SievePrime, self.list.items, {}, SievePrimeMod.lessThanByCurrentBucketIndex);
+        self.activeCount = 0;
+    }
+
     pub noinline fn apply(
         self: *HugeSievePrimes,
         buckets: Types.SIEVE_BUCKETS_TYPE,

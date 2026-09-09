@@ -21,7 +21,7 @@ pub const PrimeStore = struct {
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(lowerLimitInclusive));
         const buckets = try allocator.alignedAlloc(Types.SIEVE_BUCKET_TYPE, ALIGNMENT, bucketsLength);
         const containers: Types.SIEVE_CONTAINERS_TYPE = std.mem.bytesAsSlice(u64, std.mem.sliceAsBytes(buckets));
-        var segmentIterator = try SegmentIterator.init(allocator, lowerLimitInclusive);
+        var segmentIterator = try SegmentIterator.init(allocator, 0, lowerLimitInclusive);
         defer segmentIterator.deinit();
         while (try segmentIterator.next()) |segment| {
             @memcpy(containers[segment.containerStart..segment.containerEndExclusive], segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]);
@@ -46,7 +46,7 @@ pub const PrimeStore = struct {
         var primes = try std.ArrayList(Types.PRIME_TYPE).initCapacity(allocator, amountUpperBound);
         try primes.appendSlice(allocator, &Comptimes.WHEEL_PRIMES);
 
-        var segmentIterator = try SegmentIterator.init(allocator, @max(queryLowerLimitInclusive, primesLimitInclusive));
+        var segmentIterator = try SegmentIterator.init(allocator, 0, @max(queryLowerLimitInclusive, primesLimitInclusive));
         defer segmentIterator.deinit();
         outer: while (try segmentIterator.next()) |segment| {
             if (segment.containerStart < containers.len) {

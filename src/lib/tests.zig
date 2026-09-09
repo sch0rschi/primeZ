@@ -162,7 +162,7 @@ test "oeis A014233 strong pseudoprimes" {
 }
 
 fn expectPiSieveCountingMatchesGetPrimes(allocator: std.mem.Allocator, limit: usize) !void {
-    const counted = try Primes.piSieveCounting(allocator, limit);
+    const counted = try Primes.piSieveCounting(allocator, 0, limit);
     const primes = try Primes.getPrimes(allocator, limit);
     defer allocator.free(primes);
     if (counted != primes.len) {
@@ -194,6 +194,77 @@ test "piSieveCounting matches getPrimes length at a segment boundary" {
     try expectPiSieveCountingMatchesGetPrimes(allocator, segmentBoundary - 1);
     try expectPiSieveCountingMatchesGetPrimes(allocator, segmentBoundary);
     try expectPiSieveCountingMatchesGetPrimes(allocator, segmentBoundary + 1);
+}
+
+fn expectPiSieveCountingMatchesGetPrimesInRange(allocator: std.mem.Allocator, start: usize, limit: usize) !void {
+    const counted = try Primes.piSieveCounting(allocator, start, limit);
+
+    const primes = try Primes.getPrimes(allocator, limit);
+    defer allocator.free(primes);
+
+    var expected: usize = 0;
+    for (primes) |p| {
+        if (p >= start) expected += 1;
+    }
+
+    if (counted != expected) {
+        std.debug.print("start={} limit={}: piSieveCounting={} expected={}\n", .{ start, limit, counted, expected });
+    }
+    try std.testing.expectEqual(expected, counted);
+}
+
+test "piSieveCounting with a range start" {
+    const allocator = std.testing.allocator;
+
+    // start == 0 (matches the limit-only behavior)
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 0, 100);
+
+    // start > limit
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 100, 50);
+
+    // start == limit, on and off a prime
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 97, 97);
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 98, 98);
+
+    // small ranges, various offsets into the wheel
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 1, 100);
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 5, 100);
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 6, 100);
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 7, 100);
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 50, 100);
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 90000, 100000);
+
+    // range around container/segment boundaries
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 63, 65);
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 122_879, 122_881);
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 122_880, 245_760);
+
+    // start well beyond a single segment's worth of numbers, but before
+    // sieving-prime discovery (sqrt(limit)) finishes - no jump
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 100_000, 200_000);
+
+    // start far beyond sqrt(limit) - triggers SegmentIterator's jump, and
+    // exercises small/medium/large tier fastForwardTo (see sievePrime.zig)
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 999_000, 1_000_000);
+    try expectPiSieveCountingMatchesGetPrimesInRange(allocator, 9_990_000, 10_000_000);
+
+}
+
+// getPrimes would need to materialize every prime up to limit, far too slow
+// at the scale needed to populate the huge tier (LARGE_HUGE_THRESHOLD =
+// 61_440 in this test config, so sqrt(limit) must exceed that) - compare
+// against the difference of two piSieveCounting(0, ...) calls instead.
+test "piSieveCounting with a range start reaching the huge tier" {
+    const allocator = std.testing.allocator;
+
+    const start: usize = 3_999_990_000;
+    const limit: usize = 4_000_000_000;
+
+    const inRange = try Primes.piSieveCounting(allocator, start, limit);
+    const upToLimit = try Primes.piSieveCounting(allocator, 0, limit);
+    const belowStart = try Primes.piSieveCounting(allocator, 0, start - 1);
+
+    try std.testing.expectEqual(upToLimit - belowStart, inRange);
 }
 
 test "Primes.pi small values" {

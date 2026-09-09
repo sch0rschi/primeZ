@@ -130,6 +130,20 @@ pub const SmallSievePrimes = struct {
         }
     }
 
+    /// See LargeSievePrimes.fastForwardTo - same reasoning; each of the 8
+    /// per-residue lists is re-sorted independently (a fast-forwarded prime
+    /// never changes which of the 8 lists it belongs in - that's keyed by
+    /// initialInBucketIndex, which fastForwardTo never touches).
+    pub fn fastForwardTo(self: *SmallSievePrimes, rangeStartInclusive: usize) void {
+        for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+            for (self.map[ari].items) |*sievePrime| {
+                sievePrime.* = sievePrime.fastForwardTo(rangeStartInclusive);
+            }
+            std.mem.sortUnstable(SievePrime, self.map[ari].items, {}, SievePrimeMod.lessThanByCurrentBucketIndex);
+            self.activeCounts[ari] = 0;
+        }
+    }
+
     pub noinline fn apply(
         self: *SmallSievePrimes,
         buckets: Types.SIEVE_BUCKETS_TYPE,
