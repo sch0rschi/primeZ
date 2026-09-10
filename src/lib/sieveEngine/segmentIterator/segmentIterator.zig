@@ -111,14 +111,13 @@ pub const SegmentIterator = struct {
             self.bucketsLength,
         );
         // Discovery files primes in increasing prime-value order, not
-        // increasing target-position order (see sortByPosition) - restore
-        // the sorted-by-currentBucketIndex invariant activate() depends on
-        // before the first next() call. Medium has no such invariant (its
-        // apply() always walks every tracked prime, see its own docstring)
-        // and huge's ring/pending never needed one either (see its struct
-        // docstring), so only small/large need this.
+        // increasing target-position order - restore the sorted-by-
+        // currentBucketIndex invariant SmallSievePrimes.activate() depends
+        // on before the first next() call. Medium has no such invariant
+        // (its apply() always walks every tracked prime, see its own
+        // docstring) and neither huge nor large need one either now (both
+        // use a ring buffer instead - see their own struct docstrings).
         self.small.sortByPosition();
-        try self.large.sortByPosition(allocator, self.bucketsStart);
 
         return self;
     }
@@ -179,7 +178,7 @@ fn crossOffSegment(
 
     medium.apply(buckets, bucketsStart, bucketsEndExclusive);
 
-    large.activate(bucketsEndExclusive);
+    try large.activate(allocator, bucketsStart);
     large.apply(buckets, bucketsStart, bucketsEndExclusive);
 
     try huge.activate(allocator, bucketsStart);
@@ -351,7 +350,7 @@ noinline fn discoverSievingPrimes(
                     // or past the query's own end will never cross off
                     // anything in this query.
                     if (realSievePrime.currentBucketIndex < queryBucketsLength) {
-                        large.add(realSievePrime);
+                        try large.add(allocator, realSievePrime, outputBucketsStart);
                     }
                 } else if (prime > SMALL_MEDIUM_THRESHOLD) {
                     medium.add(realSievePrime);
@@ -376,9 +375,9 @@ noinline fn discoverSievingPrimes(
                 if (prime <= dsp) {
                     const selfSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, 0);
                     if (prime > LARGE_HUGE_THRESHOLD) {
-                        try selfHuge.add(allocator, selfSievePrime, 0);
+                        try selfHuge.add(allocator, selfSievePrime, selfBucketsStart);
                     } else if (prime > MEDIUM_LARGE_THRESHOLD) {
-                        selfLarge.add(selfSievePrime);
+                        try selfLarge.add(allocator, selfSievePrime, selfBucketsStart);
                     } else if (prime > SMALL_MEDIUM_THRESHOLD) {
                         selfMedium.add(selfSievePrime);
                     } else {

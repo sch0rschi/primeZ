@@ -7,6 +7,10 @@ const Estimates = @import("../../estimates.zig");
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
 
+const ringSizeFor = @import("hugeSievePrimes.zig").ringSizeFor;
+
+const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
+
 // applyNSievePrimesIntoSegment's fast path keeps 4 live values per batched
 // prime (a wheel-pattern pointer, initialBucketIndex, currentBucketIndex,
 // wheelStepIndex) in registers across the whole inner loop - a batch size
@@ -37,110 +41,122 @@ const BATCH_SIZE: usize = BuildUtils.GENERAL_PURPOSE_REGISTER_COUNT / 5;
 // MEDIUM_LARGE_THRESHOLD/LARGE_HUGE_THRESHOLD sit - those only affect how
 // much of this algorithm's more-than-one-hit-per-segment capability
 // actually gets used.
+// 2026-09-10: replaced a flat sorted array (sortByPosition() + an
+// activate() early-break scan needing that sort) with the same ring-buffer
+// idea HugeSievePrimes already uses (see its own docstring and project
+// memory huge_tier_bucket_list_idea) - not because large-tier primes hit
+// at most once per segment the way huge-tier ones do (they don't - see
+// applyNSievePrimesIntoSegment's own docstring), but because the sort
+// existed purely to make *activation timing* (deciding when a not-yet-
+// relevant prime becomes relevant) cheap, and a ring buffer answers that
+// in O(1) per segment with no sort or per-segment scan at all: every
+// large-tier prime's first occurrence lands within a bounded distance of
+// bucketsStart (bounded by LARGE_HUGE_THRESHOLD itself here, not a
+// query's own rootPrime - same reasoning as HugeSievePrimes.ringSizeFor,
+// reused directly), so it can be filed into a ring slot for "which
+// segment does it first become active in" at add() time, and each segment
+// just drains that one ring slot into a flat `active` list - once
+// active, apply()'s own per-item readiness check (in applyBatch, using
+// the SAME data this tier already tracked) already correctly handles
+// "already active but not due again on this specific segment", so
+// `active` never needs to be sorted or scanned to decide *that*.
+//
+// Simpler than HugeSievePrimes' own ring in one respect: nothing here
+// ever needs a "pending"-drained entry refiled a second time, since once
+// a large-tier prime activates it has (at least) one occurrence in every
+// later segment too (see applyNSievePrimesIntoSegment) rather than
+// needing to wait for one specific future segment again - so a ring slot
+// only ever needs to be drained once, into `active`, and never refilled.
 pub const LargeSievePrimes = struct {
-    list: std.ArrayList(SievePrime),
-    activeCount: usize,
+    active: std.ArrayList(SievePrime),
+
+    ring: []std.ArrayList(SievePrime),
+    ringHead: usize,
+
+    // Overflow band for primes whose first occurrence is still beyond the
+    // ring's reach at add() time - only ever the primes right at the top
+    // of this tier's own range, whose target falls back to exactly
+    // prime^2 (see HugeSievePrimes' struct docstring for the identical
+    // argument, including why that band is already naturally sorted by
+    // discovery order and never needs its own sort).
+    pending: std.ArrayList(SievePrime),
+    pendingStart: usize,
 
     pub fn init(allocator: std.mem.Allocator) !LargeSievePrimes {
+        const ringLen = ringSizeFor(BuildUtils.LARGE_HUGE_THRESHOLD);
+        const ring = try allocator.alloc(std.ArrayList(SievePrime), ringLen);
+        for (ring) |*bucket| bucket.* = .empty;
+
         // Every large-tier prime is <= LARGE_HUGE_THRESHOLD, a fixed
         // build-time constant - Estimates.primeCountUpperBound of it is a
         // safe (if slightly generous - it bounds the whole [0, threshold]
         // prefix, not just this tier's own slice above MEDIUM_LARGE_THRESHOLD)
-        // upper bound on this tier's population, letting add() use
-        // appendAssumeCapacity.
+        // upper bound on this tier's total population, reserved once here
+        // for `active` since every entry ends up there eventually.
         const capacity = Estimates.primeCountUpperBound(BuildUtils.LARGE_HUGE_THRESHOLD);
         return LargeSievePrimes{
-            .list = try std.ArrayList(SievePrime).initCapacity(allocator, capacity),
-            .activeCount = 0,
+            .active = try std.ArrayList(SievePrime).initCapacity(allocator, capacity),
+            .ring = ring,
+            .ringHead = 0,
+            .pending = try std.ArrayList(SievePrime).initCapacity(allocator, 0),
+            .pendingStart = 0,
         };
     }
 
     pub fn deinit(self: *LargeSievePrimes, allocator: std.mem.Allocator) void {
-        self.list.deinit(allocator);
+        self.active.deinit(allocator);
+        for (self.ring) |*bucket| bucket.deinit(allocator);
+        allocator.free(self.ring);
+        self.pending.deinit(allocator);
     }
 
-    pub fn add(
-        self: *LargeSievePrimes,
-        sievePrime: SievePrime,
-    ) void {
-        self.list.appendAssumeCapacity(sievePrime);
+    /// Places a freshly-discovered prime directly into its final position -
+    /// see HugeSievePrimes.add, which this mirrors exactly (including the
+    /// `bucketsStart` contract: it must be wherever ring[ringHead]
+    /// currently corresponds to, not necessarily the query's own origin -
+    /// see that function's docstring for why that distinction matters).
+    pub fn add(self: *LargeSievePrimes, allocator: std.mem.Allocator, sievePrime: SievePrime, bucketsStart: usize) !void {
+        const ringLen = self.ring.len;
+        const segmentsAhead = destinationOf(sievePrime, ringLen, bucketsStart);
+        if (segmentsAhead < ringLen) {
+            const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
+            try self.ring[slot].append(allocator, sievePrime);
+        } else {
+            try self.pending.append(allocator, sievePrime);
+        }
     }
 
-    /// See SmallSievePrimes.sortByPosition - same reasoning, same
-    /// requirement to run once after discovery's add() calls and before
-    /// the first activate().
-    ///
-    /// LSD radix sort (byte-at-a-time, base 256) rather than a comparison
-    /// sort: this tier's population is bounded by LARGE_HUGE_THRESHOLD
-    /// alone (~255K primes for the default segment size), independent of
-    /// the query's own magnitude or window width - unlike everything else
-    /// in a huge-magnitude query, it doesn't shrink as other costs do, so
-    /// it was measured taking an outsized (and growing, as other costs
-    /// fell) share of total runtime: ~7% at 1e18, ~17% at 1e17 (`perf`,
-    /// symbol `mem.sortUnstable` - see project memory
-    /// huge_tier_bucket_list_idea). Every currentBucketIndex is >=
-    /// bucketsStart by construction (same invariant HugeSievePrimes relies
-    /// on - see its destinationOf), and the position jitter above that is
-    /// bounded by roughly LARGE_HUGE_THRESHOLD itself (a few million at
-    /// most) - so the reduced key (currentBucketIndex - bucketsStart)
-    /// needs only 3-4 passes here in practice, each O(n) with a tiny
-    /// (257-entry) counting array, instead of one O(n log n) comparison
-    /// sort over ~255K elements.
-    pub fn sortByPosition(self: *LargeSievePrimes, allocator: std.mem.Allocator, bucketsStart: usize) !void {
-        const n = self.list.items.len;
-        if (n < 2) return;
+    fn destinationOf(sievePrime: SievePrime, ringLen: usize, bucketsStart: usize) usize {
+        std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
+        const segmentsAhead = (sievePrime.currentBucketIndex - bucketsStart) / SEGMENT_ELEMS;
+        return if (segmentsAhead < ringLen) segmentsAhead else ringLen;
+    }
 
-        var maxKey: usize = 0;
-        for (self.list.items) |sievePrime| {
+    pub noinline fn activate(self: *LargeSievePrimes, allocator: std.mem.Allocator, bucketsStart: usize) !void {
+        const ringLen = self.ring.len;
+
+        // Drain any pending prime whose first occurrence has finally come
+        // within the ring's reach - see HugeSievePrimes.activate, same
+        // logic and the same early-break sorted-order argument.
+        while (self.pendingStart < self.pending.items.len) {
+            const sievePrime = self.pending.items[self.pendingStart];
             std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
-            maxKey = @max(maxKey, sievePrime.currentBucketIndex - bucketsStart);
-        }
-        if (maxKey == 0) return; // every key equal - already sorted, whatever the order.
+            const segmentsAhead = (sievePrime.currentBucketIndex - bucketsStart) / SEGMENT_ELEMS;
+            if (segmentsAhead >= ringLen) break;
 
-        var passes: u6 = 0;
-        {
-            var k = maxKey;
-            while (k != 0) : (k >>= 8) passes += 1;
+            const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
+            try self.ring[slot].append(allocator, sievePrime);
+            self.pendingStart += 1;
         }
 
-        const scratch = try allocator.alloc(SievePrime, n);
-        defer allocator.free(scratch);
-
-        var src: []SievePrime = self.list.items;
-        var dst: []SievePrime = scratch;
-
-        var pass: u6 = 0;
-        while (pass < passes) : (pass += 1) {
-            const shift: u6 = pass * 8;
-            var counts: [257]usize = [_]usize{0} ** 257;
-            for (src) |sievePrime| {
-                const digit = ((sievePrime.currentBucketIndex - bucketsStart) >> shift) & 0xFF;
-                counts[digit + 1] += 1;
-            }
-            for (1..257) |i| counts[i] += counts[i - 1];
-            for (src) |sievePrime| {
-                const digit = ((sievePrime.currentBucketIndex - bucketsStart) >> shift) & 0xFF;
-                dst[counts[digit]] = sievePrime;
-                counts[digit] += 1;
-            }
-            const tmp = src;
-            src = dst;
-            dst = tmp;
-        }
-
-        if (src.ptr != self.list.items.ptr) {
-            @memcpy(self.list.items, src);
-        }
-    }
-
-    pub noinline fn activate(self: *LargeSievePrimes, bucketsEndExclusive: usize) void {
-        for (self.list.items[self.activeCount..]) |sievePrime| {
-            if (sievePrime.currentBucketIndex < bucketsEndExclusive) {
-                self.activeCount += 1;
-            } else {
-                break;
-            }
-        }
+        // This segment's own ring slot: every prime here is now active for
+        // good (see the struct docstring) - move it into `active` once,
+        // then free the slot's storage back for reuse whenever the ring
+        // wraps around to this same index again later in the query.
+        const current = &self.ring[self.ringHead];
+        try self.active.appendSlice(allocator, current.items);
+        current.clearRetainingCapacity();
+        self.ringHead = (self.ringHead + 1) & (ringLen - 1);
     }
 
     pub fn apply(
@@ -149,7 +165,7 @@ pub const LargeSievePrimes = struct {
         bucketsStart: usize,
         bucketsEndExclusive: usize,
     ) void {
-        applyBatch(BATCH_SIZE, buckets, bucketsStart, bucketsEndExclusive, self.list.items[0..self.activeCount]);
+        applyBatch(BATCH_SIZE, buckets, bucketsStart, bucketsEndExclusive, self.active.items);
     }
 
     noinline fn applyBatch(

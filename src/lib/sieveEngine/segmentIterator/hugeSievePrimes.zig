@@ -32,7 +32,11 @@ const MAX_WHEEL_STEP_FACTOR: usize = blk: {
 // Only ever grows the ring (ceilPowerOfTwo rounds up), never shrinks it
 // below what the bound above requires - the extra slots this can add cost a
 // few empty write-cursor entries, not real storage (see Block below).
-fn ringSizeFor(maxPrime: usize) usize {
+// pub: reused by LargeSievePrimes for its own ring, sized against
+// LARGE_HUGE_THRESHOLD instead of a query's rootPrime - the same math
+// applies to any tier tracking primes up to some maxPrime bound (see its
+// own docstring for why).
+pub fn ringSizeFor(maxPrime: usize) usize {
     const maxSievingPrime = maxPrime / Comptimes.WHEEL_CIRCUMFERENCE;
     const maxAdvance = maxSievingPrime * MAX_WHEEL_STEP_FACTOR + MAX_WHEEL_STEP_FACTOR;
     const maxMultipleIndexWithinSegment = (SEGMENT_ELEMS - 1) + maxAdvance;
@@ -312,11 +316,26 @@ pub const HugeSievePrimes = struct {
     /// pass step: this happens immediately, one prime at a time, as each
     /// is discovered - safe because a block-list never needs to know a
     /// slot's eventual population upfront.
+    ///
+    /// `bucketsStart` must be the position ring[ringHead] (the CURRENT
+    /// front of the ring, not necessarily the query's own first segment)
+    /// represents at the moment of this call - same convention activate()
+    /// already uses. For the top-level query's own huge tier this is
+    /// always the query's first segment, because ringHead never advances
+    /// (apply() never runs) until discovery is fully done - but
+    /// discoverSievingPrimes's self-bootstrapping [0, rootPrime] sieve
+    /// calls add() *interleaved* with its own activate()/apply() calls
+    /// (which do advance ringHead as that sieve's own segments progress),
+    /// so the slot computation must track ringHead's current value rather
+    /// than assume it's still 0 - a real bug an earlier version of this
+    /// function had (it used destinationOf's result directly as the slot,
+    /// silently correct only while ringHead happened to still be 0).
     pub fn add(self: *HugeSievePrimes, allocator: std.mem.Allocator, sievePrime: SievePrime, bucketsStart: usize) !void {
         const ringLen = self.ringWritePos.len;
-        const d = destinationOf(sievePrime, ringLen, bucketsStart);
-        if (d < ringLen) {
-            try self.storeSievingPrime(allocator, d, &sievePrime);
+        const segmentsAhead = destinationOf(sievePrime, ringLen, bucketsStart);
+        if (segmentsAhead < ringLen) {
+            const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
+            try self.storeSievingPrime(allocator, slot, &sievePrime);
         } else {
             try self.list.append(allocator, sievePrime);
         }
