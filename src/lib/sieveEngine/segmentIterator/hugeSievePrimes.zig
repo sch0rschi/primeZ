@@ -300,10 +300,7 @@ pub const HugeSievePrimes = struct {
     /// Mirrors primesieve's `buckets_[segment]++->set(...); if
     /// (Bucket::isFull(...)) addBucket(...)`.
     fn storeSievingPrime(self: *HugeSievePrimes, allocator: std.mem.Allocator, slot: usize, sievePrime: *const SievePrime) !void {
-        if (self.ringWritePos[slot] == null) {
-            self.ringWritePos[slot] = try self.addBlock(allocator, null);
-        }
-        const wp = self.ringWritePos[slot].?;
+        const wp = self.ringWritePos[slot] orelse try self.addBlock(allocator, null);
         wp[0] = sievePrime.*;
         const next = wp + 1;
         self.ringWritePos[slot] = if (isFull(next)) try self.addBlock(allocator, next) else next;
@@ -382,12 +379,14 @@ pub const HugeSievePrimes = struct {
             // Seal the slot's current (still-live) block so its valid
             // extent is on record exactly like every earlier, already-full
             // block in the chain - see Block's own docstring.
-            blockOf(wp).end = wp;
+            const headBlock = blockOf(wp);
+            headBlock.end = wp;
 
-            var block: ?*Block = blockOf(wp);
+            var block: ?*Block = headBlock;
             while (block) |b| {
-                const fill = (@intFromPtr(b.end) - @intFromPtr(b.items())) / @sizeOf(SievePrime);
-                for (b.items()[0..fill]) |*sievePrime| {
+                const items = b.items();
+                const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(SievePrime);
+                for (items[0..fill]) |*sievePrime| {
                     const initialInBucketIndex = sievePrime.initialInBucketIndex;
                     const wheelStepIndex = sievePrime.wheelStepIndex;
                     const step = Comptimes.WHEEL_PATTERNS[initialInBucketIndex][wheelStepIndex];
