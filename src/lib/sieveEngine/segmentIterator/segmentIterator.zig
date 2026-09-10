@@ -314,7 +314,16 @@ noinline fn discoverSievingPrimes(
                 const inBucketIndex: u3 = @intCast(bitIndex % BUCKET_BITS);
 
                 // Forward to the real query, unconditionally - see this
-                // function's docstring.
+                // function's docstring. Computes only the plain (unpacked)
+                // target position first, deliberately not yet the packed
+                // SievePrime itself: for a huge-magnitude range-start
+                // query, the huge/large filters below discard the large
+                // majority of targets outside the query's own range (see
+                // their own comments), and assembling the packed bit
+                // layout (SievePrime.fromTarget) is real, measurable work
+                // (`perf annotate` showed it materializing to a stack slot
+                // in this same loop) - worth paying only for a target
+                // that's actually going to be kept.
                 //
                 // Checked most-likely-first rather than in threshold
                 // order: for a huge-magnitude range-start query, the
@@ -324,7 +333,7 @@ noinline fn discoverSievingPrimes(
                 // combined), so this lets that common case fall out after
                 // a single comparison instead of always evaluating all
                 // three.
-                const realSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, startInclusive);
+                const target = SievePrimeMod.firstAdmissibleMultiple(prime, startInclusive);
                 if (prime > LARGE_HUGE_THRESHOLD) {
                     // Mirrors primesieve's own Wheel::addSievingPrime ("if
                     // (multiple > stop_) return" - see
@@ -341,7 +350,8 @@ noinline fn discoverSievingPrimes(
                     // ~900MB vs primesieve's ~20-90MB for the same query;
                     // see project memory huge_tier_bucket_list_idea for
                     // the full investigation.
-                    if (realSievePrime.currentBucketIndex < queryBucketsLength) {
+                    if (target.bucketIndex < queryBucketsLength) {
+                        const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
                         try huge.add(allocator, realSievePrime, outputBucketsStart);
                     }
                 } else if (prime > MEDIUM_LARGE_THRESHOLD) {
@@ -349,11 +359,12 @@ noinline fn discoverSievingPrimes(
                     // large-tier prime whose first target already lies at
                     // or past the query's own end will never cross off
                     // anything in this query.
-                    if (realSievePrime.currentBucketIndex < queryBucketsLength) {
+                    if (target.bucketIndex < queryBucketsLength) {
+                        const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
                         try large.add(allocator, realSievePrime, outputBucketsStart);
                     }
                 } else if (prime > SMALL_MEDIUM_THRESHOLD) {
-                    medium.add(realSievePrime);
+                    medium.add(SievePrime.fromTarget(target, bucketIndex, inBucketIndex));
                 } else {
                     // Only SmallSievePrimes.add() needs inBucketIndex as a
                     // comptime value (for its own comptime-specialized
@@ -362,6 +373,7 @@ noinline fn discoverSievingPrimes(
                     // `ari` dispatch (8 unrolled copies) is scoped to only
                     // the small branch instead of wrapping all four and
                     // forcing every huge/large/medium prime through it too.
+                    const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
                     inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
                         if (ari == inBucketIndex) {
                             small.add(ari, outputBuckets, outputBucketsStart, outputBucketsEndExclusive, realSievePrime);

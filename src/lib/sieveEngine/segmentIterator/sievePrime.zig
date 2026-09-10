@@ -28,7 +28,16 @@ pub const SievePrime = packed struct {
     /// why this used to be a two-step process.
     pub fn from(prime: usize, bucketIndex: usize, inBucketIndex: u3, minRawNumberInclusive: usize) SievePrime {
         const target = firstAdmissibleMultiple(prime, minRawNumberInclusive);
+        return fromTarget(target, bucketIndex, inBucketIndex);
+    }
 
+    /// Builds the packed struct from an already-computed target - lets a
+    /// caller check target.bucketIndex (a plain, unpacked usize) before
+    /// paying to assemble the packed bit layout at all, for a target it
+    /// might end up discarding without ever needing the packed form (see
+    /// SegmentIterator's discoverSievingPrimes, which discards a target
+    /// outside the query's own range before ever calling this).
+    pub fn fromTarget(target: AdmissibleMultiple, bucketIndex: usize, inBucketIndex: u3) SievePrime {
         return SievePrime{
             .currentBucketIndex = target.bucketIndex,
             .initialBucketIndex = @intCast(bucketIndex),
@@ -42,7 +51,7 @@ pub fn lessThanByCurrentBucketIndex(_: void, a: SievePrime, b: SievePrime) bool 
     return a.currentBucketIndex < b.currentBucketIndex;
 }
 
-const AdmissibleMultiple = struct {
+pub const AdmissibleMultiple = struct {
     bucketIndex: usize,
     wheelStepIndex: u3,
 };
@@ -75,7 +84,7 @@ const AdmissibleMultiple = struct {
 /// (k+8)-th admissible k is exactly the k-th plus 30, so prime*k's residue
 /// mod 30 repeats every 8 admissible k's too). The prime^2 case (k = prime)
 /// is just this same formula with minRawNumberInclusive = 0.
-fn firstAdmissibleMultiple(prime: usize, minRawNumberInclusive: usize) AdmissibleMultiple {
+pub fn firstAdmissibleMultiple(prime: usize, minRawNumberInclusive: usize) AdmissibleMultiple {
     const k0 = @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
     const r = k0 % Comptimes.WHEEL_CIRCUMFERENCE;
     const wheelStepIndex = Comptimes.ADMISSIBLE_RESIDUES.reverseMap[r];
