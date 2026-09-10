@@ -1,7 +1,7 @@
 const Comptimes = @import("../comptimes.zig");
 const Utils = @import("../utils.zig");
 
-pub const SievePrime = struct {
+pub const SievePrime = packed struct {
     currentBucketIndex: usize,
     initialBucketIndex: u32,
     initialInBucketIndex: u3,

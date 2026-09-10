@@ -69,8 +69,68 @@ pub const LargeSievePrimes = struct {
     /// See SmallSievePrimes.sortByPosition - same reasoning, same
     /// requirement to run once after discovery's add() calls and before
     /// the first activate().
-    pub fn sortByPosition(self: *LargeSievePrimes) void {
-        std.mem.sortUnstable(SievePrime, self.list.items, {}, SievePrimeMod.lessThanByCurrentBucketIndex);
+    ///
+    /// LSD radix sort (byte-at-a-time, base 256) rather than a comparison
+    /// sort: this tier's population is bounded by LARGE_HUGE_THRESHOLD
+    /// alone (~255K primes for the default segment size), independent of
+    /// the query's own magnitude or window width - unlike everything else
+    /// in a huge-magnitude query, it doesn't shrink as other costs do, so
+    /// it was measured taking an outsized (and growing, as other costs
+    /// fell) share of total runtime: ~7% at 1e18, ~17% at 1e17 (`perf`,
+    /// symbol `mem.sortUnstable` - see project memory
+    /// huge_tier_bucket_list_idea). Every currentBucketIndex is >=
+    /// bucketsStart by construction (same invariant HugeSievePrimes relies
+    /// on - see its destinationOf), and the position jitter above that is
+    /// bounded by roughly LARGE_HUGE_THRESHOLD itself (a few million at
+    /// most) - so the reduced key (currentBucketIndex - bucketsStart)
+    /// needs only 3-4 passes here in practice, each O(n) with a tiny
+    /// (257-entry) counting array, instead of one O(n log n) comparison
+    /// sort over ~255K elements.
+    pub fn sortByPosition(self: *LargeSievePrimes, allocator: std.mem.Allocator, bucketsStart: usize) !void {
+        const n = self.list.items.len;
+        if (n < 2) return;
+
+        var maxKey: usize = 0;
+        for (self.list.items) |sievePrime| {
+            std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
+            maxKey = @max(maxKey, sievePrime.currentBucketIndex - bucketsStart);
+        }
+        if (maxKey == 0) return; // every key equal - already sorted, whatever the order.
+
+        var passes: u6 = 0;
+        {
+            var k = maxKey;
+            while (k != 0) : (k >>= 8) passes += 1;
+        }
+
+        const scratch = try allocator.alloc(SievePrime, n);
+        defer allocator.free(scratch);
+
+        var src: []SievePrime = self.list.items;
+        var dst: []SievePrime = scratch;
+
+        var pass: u6 = 0;
+        while (pass < passes) : (pass += 1) {
+            const shift: u6 = pass * 8;
+            var counts: [257]usize = [_]usize{0} ** 257;
+            for (src) |sievePrime| {
+                const digit = ((sievePrime.currentBucketIndex - bucketsStart) >> shift) & 0xFF;
+                counts[digit + 1] += 1;
+            }
+            for (1..257) |i| counts[i] += counts[i - 1];
+            for (src) |sievePrime| {
+                const digit = ((sievePrime.currentBucketIndex - bucketsStart) >> shift) & 0xFF;
+                dst[counts[digit]] = sievePrime;
+                counts[digit] += 1;
+            }
+            const tmp = src;
+            src = dst;
+            dst = tmp;
+        }
+
+        if (src.ptr != self.list.items.ptr) {
+            @memcpy(self.list.items, src);
+        }
     }
 
     pub noinline fn activate(self: *LargeSievePrimes, bucketsEndExclusive: usize) void {

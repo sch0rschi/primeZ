@@ -45,10 +45,7 @@ pub const SegmentIterator = struct {
     large: LargeSievePrimes,
     huge: HugeSievePrimes,
 
-    // Explicit error set (rather than inferred `!SegmentIterator`) because
-    // init() and discoverSievingPrimes() call each other recursively -
-    // Zig can't infer an error set across a genuine call cycle.
-    pub noinline fn init(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize) std.mem.Allocator.Error!SegmentIterator {
+    pub noinline fn init(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize) !SegmentIterator {
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(limitInclusive));
         const buckets = try allocator.alignedAlloc(
             Types.SIEVE_BUCKET_TYPE,
@@ -92,13 +89,14 @@ pub const SegmentIterator = struct {
 
         // Sieving-prime discovery is fully decoupled from the output walk
         // (see discoverSievingPrimes): every prime up to rootPrime is found
-        // via its own, always-0-based nested sieve, and filed directly at
-        // its true target position relative to startInclusive - no
-        // "discover relative to 0, then jump/re-seed relative to the real
-        // start" two-step (see project memory huge_tier_bucket_list_idea).
-        // Must run after buckets/PreSieve above are ready: small-tier
-        // filing crosses off immediately when a prime's target lands
-        // within this very first output segment.
+        // via a single, non-recursive, self-bootstrapping sieve of its own
+        // (see that function's docstring), and filed directly at its true
+        // target position relative to startInclusive - no "discover
+        // relative to 0, then jump/re-seed relative to the real start"
+        // two-step (see project memory huge_tier_bucket_list_idea). Must
+        // run after buckets/PreSieve above are ready: small-tier filing
+        // crosses off immediately when a prime's target lands within this
+        // very first output segment.
         try discoverSievingPrimes(
             allocator,
             rootPrime,
@@ -110,6 +108,7 @@ pub const SegmentIterator = struct {
             self.buckets,
             self.bucketsStart,
             self.bucketsEndExclusive,
+            self.bucketsLength,
         );
         // Discovery files primes in increasing prime-value order, not
         // increasing target-position order (see sortByPosition) - restore
@@ -119,7 +118,7 @@ pub const SegmentIterator = struct {
         // and huge's ring/pending never needed one either (see its struct
         // docstring), so only small/large need this.
         self.small.sortByPosition();
-        self.large.sortByPosition();
+        try self.large.sortByPosition(allocator, self.bucketsStart);
 
         return self;
     }
@@ -149,16 +148,7 @@ pub const SegmentIterator = struct {
             PreSieve.fill(self.buckets, self.bucketsStart);
         }
 
-        self.small.activate(self.bucketsEndExclusive);
-        self.small.apply(self.buckets, self.bucketsStart, self.bucketsEndExclusive);
-
-        self.medium.apply(self.buckets, self.bucketsStart, self.bucketsEndExclusive);
-
-        self.large.activate(self.bucketsEndExclusive);
-        self.large.apply(self.buckets, self.bucketsStart, self.bucketsEndExclusive);
-
-        try self.huge.activate(self.allocator, self.bucketsStart);
-        try self.huge.apply(self.allocator, self.buckets, self.bucketsStart, self.bucketsEndExclusive);
+        try crossOffSegment(self.allocator, &self.small, &self.medium, &self.large, &self.huge, self.buckets, self.bucketsStart, self.bucketsEndExclusive);
 
         return Segment{
             .containerStart = self.bucketsStart / 8,
@@ -168,14 +158,72 @@ pub const SegmentIterator = struct {
     }
 };
 
-/// Finds every sieving prime up to and including rootPrime, via its own
-/// always-0-based nested SegmentIterator (bottoms out fast: rootPrime's own
-/// discovery needs primes only up to sqrt(rootPrime), and so on - this
-/// shrinks below 2 within a handful of levels for any u64 input, mirroring
-/// primesieve's tinySieve/SievingPrimes bootstrap), and files each one
-/// directly into the real (startInclusive-relative) tiers - see
+/// Crosses off composites in [bucketsStart, bucketsEndExclusive) using
+/// every sieving prime already registered in small/medium/large/huge -
+/// shared between SegmentIterator.next() (the real output walk) and
+/// discoverSievingPrimes (which runs the exact same per-segment cross-off
+/// step against its own, disposable tiers - see that function's
+/// docstring).
+fn crossOffSegment(
+    allocator: std.mem.Allocator,
+    small: *SmallSievePrimes,
+    medium: *MediumSievePrimes,
+    large: *LargeSievePrimes,
+    huge: *HugeSievePrimes,
+    buckets: Types.SIEVE_BUCKETS_TYPE,
+    bucketsStart: usize,
+    bucketsEndExclusive: usize,
+) !void {
+    small.activate(bucketsEndExclusive);
+    small.apply(buckets, bucketsStart, bucketsEndExclusive);
+
+    medium.apply(buckets, bucketsStart, bucketsEndExclusive);
+
+    large.activate(bucketsEndExclusive);
+    large.apply(buckets, bucketsStart, bucketsEndExclusive);
+
+    try huge.activate(allocator, bucketsStart);
+    try huge.apply(allocator, buckets, bucketsStart, bucketsEndExclusive);
+}
+
+/// Finds every sieving prime up to and including rootPrime, and files each
+/// one directly into the real (startInclusive-relative) tiers - see
 /// SievePrime.from and HugeSievePrimes' struct docstring for why this
 /// lands correctly (and cheaply) without a separate re-seed pass.
+///
+/// This is a single, non-recursive, self-bootstrapping sieve of [0,
+/// rootPrime] - not a nested SegmentIterator calling this same function
+/// again for its own needs (an earlier version worked that way; see
+/// project memory huge_tier_bucket_list_idea for the "why are we doing it
+/// like this" discussion that led to this rewrite). The classical Sieve of
+/// Eratosthenes doesn't need its sieving primes precomputed at all: scan
+/// candidates in increasing order, and whenever an unmarked position is
+/// reached it must be prime (its smallest possible factor, being <= its
+/// own square root, would already have been discovered - and had its own
+/// multiples crossed off - earlier in the very same scan, by induction).
+/// So this sieve bootstraps its own sieving primes as it goes: any
+/// discovered prime <= dsp (= sqrt(rootPrime), the largest prime this
+/// sieve could ever still need against itself) is registered into this
+/// function's own, disposable small/medium/large/huge tiers (selfSmall
+/// etc.) so it takes effect on the rest of this same sieve - including,
+/// via SmallSievePrimes.add()'s existing same-segment-immediate-apply
+/// path, within the very segment it was just discovered in. Every
+/// discovered prime (regardless of whether it's <= dsp) is additionally,
+/// unconditionally forwarded to the real query's own tiers, exactly as
+/// before.
+///
+/// primesieve's own bootstrap (SievingPrimes::tinySieve, see
+/// bench/primesieve/src/SievingPrimes.cpp) uses this same "self-discovery"
+/// principle via a flat, non-segmented array for an even smaller bound
+/// (stop^(1/4)) before switching to its own segmented Erat machinery for
+/// [~13, sqrt(stop)] - a separate step we don't need: SmallSievePrimes.add()
+/// already provides the "apply within the segment it was just discovered
+/// in" primitive tinySieve exists to bootstrap, so a single segmented,
+/// self-discovering sieve suffices here for the whole [0, rootPrime] range.
+///
+/// dsp is always far below rootPrime (it's rootPrime's own square root),
+/// so this bottoms out immediately - no further recursion of any kind, for
+/// any u64 input.
 noinline fn discoverSievingPrimes(
     allocator: std.mem.Allocator,
     rootPrime: usize,
@@ -187,15 +235,73 @@ noinline fn discoverSievingPrimes(
     outputBuckets: Types.SIEVE_BUCKETS_TYPE,
     outputBucketsStart: usize,
     outputBucketsEndExclusive: usize,
-) std.mem.Allocator.Error!void {
+    queryBucketsLength: usize,
+) !void {
     if (rootPrime < 2) return;
 
-    var nested = try SegmentIterator.init(allocator, 0, rootPrime);
-    defer nested.deinit();
+    // The largest prime this sieve could ever need against itself - see
+    // this function's own docstring for why nothing bigger is ever
+    // relevant to sieving [0, rootPrime] correctly.
+    const dsp = std.math.sqrt(rootPrime);
 
-    outer: while (try nested.next()) |segment| {
-        for (segment.containerStart..segment.containerEndExclusive, segment.containers[0 .. segment.containerEndExclusive - segment.containerStart]) |containerIndex, container| {
-            var containerWorkingCopy: u64 = container;
+    const selfBucketsLength = ALIGNMENT.forward(Utils.getSieveLength(rootPrime));
+    const selfBuckets = try allocator.alignedAlloc(
+        Types.SIEVE_BUCKET_TYPE,
+        ALIGNMENT,
+        @min(SEGMENT_ELEMS, selfBucketsLength),
+    );
+    defer allocator.free(selfBuckets);
+    const selfContainers: Types.SIEVE_CONTAINERS_TYPE = std.mem.bytesAsSlice(u64, std.mem.sliceAsBytes(selfBuckets));
+
+    // This sieve's own, disposable tiers - population bounded by dsp, not
+    // rootPrime, so these stay small regardless of how large the real
+    // query's own rootPrime is (HugeSievePrimes.init(allocator, dsp) sizes
+    // its ring accordingly). Discovery order here is strictly increasing
+    // in prime value, and every target is prime^2 (self-registration always
+    // passes minRawNumberInclusive=0) - strictly increasing in prime too -
+    // so unlike the real query's small/large tiers, these never need
+    // sortByPosition(): the sorted-by-position invariant holds for free.
+    var selfSmall = try SmallSievePrimes.init(allocator);
+    defer selfSmall.deinit(allocator);
+    var selfMedium = try MediumSievePrimes.init(allocator);
+    defer selfMedium.deinit(allocator);
+    var selfLarge = try LargeSievePrimes.init(allocator);
+    defer selfLarge.deinit(allocator);
+    var selfHuge = try HugeSievePrimes.init(allocator, dsp);
+    defer selfHuge.deinit(allocator);
+
+    PreSieve.fill(selfBuckets, 0);
+    @memcpy(selfBuckets[0..PreSieve.OVERRIDE_BUCKET_COUNT], &PreSieve.OVERRIDE_BUCKETS);
+
+    var selfBucketsStart: usize = 0;
+    var selfBucketsEndExclusive: usize = @min(SEGMENT_ELEMS, selfBucketsLength);
+    var started = false;
+
+    outer: while (true) {
+        if (!started) {
+            if (selfBucketsStart >= selfBucketsLength) break;
+            started = true;
+        } else {
+            const candidate = selfBucketsStart + SEGMENT_ELEMS;
+            if (candidate >= selfBucketsLength) break;
+            selfBucketsStart = candidate;
+            selfBucketsEndExclusive = @min(selfBucketsStart + SEGMENT_ELEMS, selfBucketsLength);
+            PreSieve.fill(selfBuckets, selfBucketsStart);
+        }
+
+        try crossOffSegment(allocator, &selfSmall, &selfMedium, &selfLarge, &selfHuge, selfBuckets, selfBucketsStart, selfBucketsEndExclusive);
+
+        const containerStart = selfBucketsStart / 8;
+        const containerEndExclusive = selfBucketsEndExclusive / 8;
+
+        // containerIndex is the segment's ABSOLUTE container position
+        // (needed below to compute each bit's real numeric value); the
+        // array access itself must go through localContainerIndex, since
+        // selfContainers/selfBuckets is a single reused, segment-sized
+        // buffer (refilled by PreSieve.fill each segment), not one big
+        // array spanning [0, rootPrime].
+        for (containerStart..containerEndExclusive, 0..) |containerIndex, localContainerIndex| {
+            var containerWorkingCopy: u64 = selfContainers[localContainerIndex];
             while (containerWorkingCopy != 0) {
                 const inContainerIndex: u6 = @intCast(@ctz(containerWorkingCopy));
                 containerWorkingCopy &= containerWorkingCopy - 1;
@@ -207,31 +313,96 @@ noinline fn discoverSievingPrimes(
 
                 const bucketIndex = bitIndex / BUCKET_BITS;
                 const inBucketIndex: u3 = @intCast(bitIndex % BUCKET_BITS);
-                const sievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, startInclusive);
 
-                inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-                    if (ari == inBucketIndex) {
-                        if (prime <= SMALL_MEDIUM_THRESHOLD) {
-                            small.add(ari, outputBuckets, outputBucketsStart, outputBucketsEndExclusive, sievePrime);
-                        } else if (prime <= MEDIUM_LARGE_THRESHOLD) {
-                            medium.add(sievePrime);
-                        } else if (prime <= LARGE_HUGE_THRESHOLD) {
-                            large.add(sievePrime);
-                        } else {
-                            huge.add(sievePrime);
+                // Forward to the real query, unconditionally - see this
+                // function's docstring.
+                //
+                // Checked most-likely-first rather than in threshold
+                // order: for a huge-magnitude range-start query, the
+                // overwhelming majority of discovered primes land in the
+                // huge tier (everything above LARGE_HUGE_THRESHOLD, up to
+                // rootPrime - a far wider span than the other three tiers
+                // combined), so this lets that common case fall out after
+                // a single comparison instead of always evaluating all
+                // three.
+                const realSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, startInclusive);
+                if (prime > LARGE_HUGE_THRESHOLD) {
+                    // Mirrors primesieve's own Wheel::addSievingPrime ("if
+                    // (multiple > stop_) return" - see
+                    // bench/primesieve/include/primesieve/Wheel.hpp): a
+                    // huge-tier prime hits at most once per segment (see
+                    // HugeSievePrimes' own docstring), so if its computed
+                    // target already lies at or past the query's own end,
+                    // it will NEVER cross off anything in this query -
+                    // don't spend a ring/pending slot tracking it at all.
+                    // For a narrow window near a huge start, this is the
+                    // overwhelming majority of huge-tier primes (their
+                    // step size vastly exceeds the window width) - found
+                    // via `perf`/memory profiling showing primez using
+                    // ~900MB vs primesieve's ~20-90MB for the same query;
+                    // see project memory huge_tier_bucket_list_idea for
+                    // the full investigation.
+                    if (realSievePrime.currentBucketIndex < queryBucketsLength) {
+                        try huge.add(allocator, realSievePrime, outputBucketsStart);
+                    }
+                } else if (prime > MEDIUM_LARGE_THRESHOLD) {
+                    // Same reasoning as the huge-tier filter above: a
+                    // large-tier prime whose first target already lies at
+                    // or past the query's own end will never cross off
+                    // anything in this query.
+                    if (realSievePrime.currentBucketIndex < queryBucketsLength) {
+                        large.add(realSievePrime);
+                    }
+                } else if (prime > SMALL_MEDIUM_THRESHOLD) {
+                    medium.add(realSievePrime);
+                } else {
+                    // Only SmallSievePrimes.add() needs inBucketIndex as a
+                    // comptime value (for its own comptime-specialized
+                    // wheel unrolling) - medium/large/huge.add() just take
+                    // the already-runtime sievePrime, so the comptime
+                    // `ari` dispatch (8 unrolled copies) is scoped to only
+                    // the small branch instead of wrapping all four and
+                    // forcing every huge/large/medium prime through it too.
+                    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+                        if (ari == inBucketIndex) {
+                            small.add(ari, outputBuckets, outputBucketsStart, outputBucketsEndExclusive, realSievePrime);
                         }
                     }
+                }
+
+                // Self-register into this sieve's own tiers if this prime
+                // is small enough to still matter for sieving the rest of
+                // [0, rootPrime] - see this function's docstring.
+                if (prime <= dsp) {
+                    const selfSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, 0);
+                    if (prime > LARGE_HUGE_THRESHOLD) {
+                        try selfHuge.add(allocator, selfSievePrime, 0);
+                    } else if (prime > MEDIUM_LARGE_THRESHOLD) {
+                        selfLarge.add(selfSievePrime);
+                    } else if (prime > SMALL_MEDIUM_THRESHOLD) {
+                        selfMedium.add(selfSievePrime);
+                    } else {
+                        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+                            if (ari == inBucketIndex) {
+                                selfSmall.add(ari, selfBuckets, selfBucketsStart, selfBucketsEndExclusive, selfSievePrime);
+                            }
+                        }
+                    }
+                    // Re-sync the local snapshot: self-registration may
+                    // have just crossed off a bit within the SAME
+                    // container currently being scanned (e.g. discovering
+                    // 7 whose square 49 falls in the very first container)
+                    // via SmallSievePrimes.add()'s same-segment-immediate-
+                    // apply path - containerWorkingCopy was snapshotted
+                    // before that write, so without this it could re-
+                    // surface an already-composite bit as a false "prime".
+                    // ANDing with the live value is always safe: it can
+                    // only clear bits (never set ones we haven't already
+                    // consumed via the `&= x-1` above), and it's a no-op
+                    // whenever the write landed in a different container.
+                    containerWorkingCopy &= selfContainers[localContainerIndex];
                 }
             }
         }
     }
-
-    // Every sieving prime is staged (see HugeSievePrimes.add) rather than
-    // placed directly - now that the exact population is known, this picks
-    // exact per-ring-slot capacities and does the real placement with
-    // appendAssumeCapacity instead of tens of millions of growable
-    // `.append()` calls (profiled as the dominant cost of a huge-magnitude
-    // range-start query once firstAdmissibleMultiple's own scan loop was
-    // fixed - see project memory huge_tier_bucket_list_idea).
-    try huge.finalizeDiscovery(allocator, outputBucketsStart);
 }
