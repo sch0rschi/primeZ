@@ -7,6 +7,7 @@ const BuildUtils = @import("buildUtils");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
+const HugeSievePrime = SievePrimeMod.HugeSievePrime;
 
 const SmallSievePrimes = @import("smallSievePrimes.zig").SmallSievePrimes;
 const MediumSievePrimes = @import("mediumSievePrimes.zig").MediumSievePrimes;
@@ -333,7 +334,27 @@ noinline fn discoverSievingPrimes(
                 // combined), so this lets that common case fall out after
                 // a single comparison instead of always evaluating all
                 // three.
-                const target = SievePrimeMod.firstAdmissibleMultiple(prime, startInclusive);
+                // Huge tier gets its own wheel-210 target/type (see
+                // HugeSievePrime), computed separately from the wheel-30
+                // target the other three tiers share below - its
+                // discard-out-of-range filter must be checked against the
+                // wheel-210 landing itself (the position this prime will
+                // actually first cross off under wheel-210 stepping), not
+                // the wheel-30 one: a prime whose wheel-30 target is
+                // in-range but lands on a multiple of 7 (already
+                // redundant, see WHEEL_PATTERNS_210's docstring) may have
+                // its true first wheel-210 landing fall outside the query
+                // entirely, in which case it's correctly discarded here
+                // too.
+                //
+                // Checked most-likely-first rather than in threshold
+                // order: for a huge-magnitude range-start query, the
+                // overwhelming majority of discovered primes land in the
+                // huge tier (everything above LARGE_HUGE_THRESHOLD, up to
+                // rootPrime - a far wider span than the other three tiers
+                // combined), so this lets that common case fall out after
+                // a single comparison instead of always evaluating all
+                // three.
                 if (prime > LARGE_HUGE_THRESHOLD) {
                     // Mirrors primesieve's own Wheel::addSievingPrime ("if
                     // (multiple > stop_) return" - see
@@ -350,33 +371,48 @@ noinline fn discoverSievingPrimes(
                     // ~900MB vs primesieve's ~20-90MB for the same query;
                     // see project memory huge_tier_bucket_list_idea for
                     // the full investigation.
-                    if (target.bucketIndex < queryBucketsLength) {
-                        const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
-                        try huge.add(allocator, realSievePrime, outputBucketsStart);
+                    const target210 = SievePrimeMod.firstAdmissibleMultiple210(prime, startInclusive);
+                    if (target210.bucketIndex < queryBucketsLength) {
+                        const realHugeSievePrime = HugeSievePrime.fromTarget210(target210, bucketIndex, inBucketIndex);
+                        try huge.add(allocator, realHugeSievePrime, outputBucketsStart);
                     }
-                } else if (prime > MEDIUM_LARGE_THRESHOLD) {
-                    // Same reasoning as the huge-tier filter above: a
-                    // large-tier prime whose first target already lies at
-                    // or past the query's own end will never cross off
-                    // anything in this query.
-                    if (target.bucketIndex < queryBucketsLength) {
-                        const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
-                        try large.add(allocator, realSievePrime, outputBucketsStart);
-                    }
-                } else if (prime > SMALL_MEDIUM_THRESHOLD) {
-                    medium.add(SievePrime.fromTarget(target, bucketIndex, inBucketIndex));
                 } else {
-                    // Only SmallSievePrimes.add() needs inBucketIndex as a
-                    // comptime value (for its own comptime-specialized
-                    // wheel unrolling) - medium/large/huge.add() just take
-                    // the already-runtime sievePrime, so the comptime
-                    // `ari` dispatch (8 unrolled copies) is scoped to only
-                    // the small branch instead of wrapping all four and
-                    // forcing every huge/large/medium prime through it too.
-                    const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
-                    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-                        if (ari == inBucketIndex) {
-                            small.add(ari, outputBuckets, outputBucketsStart, outputBucketsEndExclusive, realSievePrime);
+                    // Computes only the plain (unpacked) target position
+                    // first, deliberately not yet the packed SievePrime
+                    // itself: for a huge-magnitude range-start query, the
+                    // large filter below discards the large majority of
+                    // targets outside the query's own range (see its own
+                    // comment), and assembling the packed bit layout
+                    // (SievePrime.fromTarget) is real, measurable work
+                    // (`perf annotate` showed it materializing to a stack
+                    // slot in this same loop) - worth paying only for a
+                    // target that's actually going to be kept.
+                    const target = SievePrimeMod.firstAdmissibleMultiple(prime, startInclusive);
+                    if (prime > MEDIUM_LARGE_THRESHOLD) {
+                        // Same reasoning as the huge-tier filter above: a
+                        // large-tier prime whose first target already lies
+                        // at or past the query's own end will never cross
+                        // off anything in this query.
+                        if (target.bucketIndex < queryBucketsLength) {
+                            const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
+                            try large.add(allocator, realSievePrime, outputBucketsStart);
+                        }
+                    } else if (prime > SMALL_MEDIUM_THRESHOLD) {
+                        medium.add(SievePrime.fromTarget(target, bucketIndex, inBucketIndex));
+                    } else {
+                        // Only SmallSievePrimes.add() needs inBucketIndex
+                        // as a comptime value (for its own comptime-
+                        // specialized wheel unrolling) - medium/large.add()
+                        // just take the already-runtime sievePrime, so the
+                        // comptime `ari` dispatch (8 unrolled copies) is
+                        // scoped to only the small branch instead of
+                        // wrapping both and forcing every large/medium
+                        // prime through it too.
+                        const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
+                        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+                            if (ari == inBucketIndex) {
+                                small.add(ari, outputBuckets, outputBucketsStart, outputBucketsEndExclusive, realSievePrime);
+                            }
                         }
                     }
                 }
@@ -385,17 +421,21 @@ noinline fn discoverSievingPrimes(
                 // is small enough to still matter for sieving the rest of
                 // [0, rootPrime] - see this function's docstring.
                 if (prime <= dsp) {
-                    const selfSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, 0);
                     if (prime > LARGE_HUGE_THRESHOLD) {
-                        try selfHuge.add(allocator, selfSievePrime, selfBucketsStart);
-                    } else if (prime > MEDIUM_LARGE_THRESHOLD) {
-                        try selfLarge.add(allocator, selfSievePrime, selfBucketsStart);
-                    } else if (prime > SMALL_MEDIUM_THRESHOLD) {
-                        selfMedium.add(selfSievePrime);
+                        const selfTarget210 = SievePrimeMod.firstAdmissibleMultiple210(prime, 0);
+                        const selfHugeSievePrime = HugeSievePrime.fromTarget210(selfTarget210, bucketIndex, inBucketIndex);
+                        try selfHuge.add(allocator, selfHugeSievePrime, selfBucketsStart);
                     } else {
-                        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-                            if (ari == inBucketIndex) {
-                                selfSmall.add(ari, selfBuckets, selfBucketsStart, selfBucketsEndExclusive, selfSievePrime);
+                        const selfSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, 0);
+                        if (prime > MEDIUM_LARGE_THRESHOLD) {
+                            try selfLarge.add(allocator, selfSievePrime, selfBucketsStart);
+                        } else if (prime > SMALL_MEDIUM_THRESHOLD) {
+                            selfMedium.add(selfSievePrime);
+                        } else {
+                            inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
+                                if (ari == inBucketIndex) {
+                                    selfSmall.add(ari, selfBuckets, selfBucketsStart, selfBucketsEndExclusive, selfSievePrime);
+                                }
                             }
                         }
                     }

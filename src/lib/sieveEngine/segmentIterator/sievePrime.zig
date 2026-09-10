@@ -96,3 +96,51 @@ pub fn firstAdmissibleMultiple(prime: usize, minRawNumberInclusive: usize) Admis
         .wheelStepIndex = @intCast(wheelStepIndex),
     };
 }
+
+pub const AdmissibleMultiple210 = struct {
+    bucketIndex: usize,
+    wheelStepIndex210: u6,
+};
+
+/// Wheel-210 analog of firstAdmissibleMultiple, huge tier only - same
+/// derivation, just resuming within the 48-long wheel-210 cycle
+/// (Comptimes.WHEEL_PATTERNS_210) instead of the 8-long wheel-30 one.
+/// bucketIndex still lands in wheel-30 bucket units (WHEEL_CIRCUMFERENCE,
+/// not WHEEL_CIRCUMFERENCE_210) - the underlying sieve array is always
+/// wheel-30; only the sequence of admissible landings a huge-tier prime's
+/// own stepping visits changes.
+pub fn firstAdmissibleMultiple210(prime: usize, minRawNumberInclusive: usize) AdmissibleMultiple210 {
+    const k0 = @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
+    const r = k0 % Comptimes.WHEEL_CIRCUMFERENCE_210;
+    const wheelStepIndex210 = Comptimes.ADMISSIBLE_RESIDUES_210.reverseMap[r];
+    const k = k0 + (Comptimes.ADMISSIBLE_RESIDUES_210.list[wheelStepIndex210] - r);
+
+    const multiple = prime * k;
+    return .{
+        .bucketIndex = multiple / Comptimes.WHEEL_CIRCUMFERENCE,
+        .wheelStepIndex210 = @intCast(wheelStepIndex210),
+    };
+}
+
+/// Huge-tier-only sieving-prime record: a separate type from SievePrime
+/// (not a shared field widened for every tier) so small/medium/large's
+/// wheel-30 stepping - and their u3 wheelStepIndex's free natural
+/// wraparound at 8 - are untouched by this. Same packed bit budget as
+/// SievePrime (105 bits vs. 102, both round up to the same 128-bit/16-byte
+/// backing integer), so this costs nothing extra in the ring/block storage
+/// hugeSievePrimes.zig already has.
+pub const HugeSievePrime = packed struct {
+    currentBucketIndex: usize,
+    initialBucketIndex: u32,
+    initialInBucketIndex: u3,
+    wheelStepIndex210: u6,
+
+    pub fn fromTarget210(target: AdmissibleMultiple210, bucketIndex: usize, inBucketIndex: u3) HugeSievePrime {
+        return HugeSievePrime{
+            .currentBucketIndex = target.bucketIndex,
+            .initialBucketIndex = @intCast(bucketIndex),
+            .initialInBucketIndex = inBucketIndex,
+            .wheelStepIndex210 = target.wheelStepIndex210,
+        };
+    }
+};

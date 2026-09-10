@@ -4,7 +4,12 @@ const Comptimes = @import("../comptimes.zig");
 const BuildUtils = @import("buildUtils");
 
 const SievePrimeMod = @import("sievePrime.zig");
-const SievePrime = SievePrimeMod.SievePrime;
+// Huge tier uses its own record type (wheel-210 stepping, a wider 48-phase
+// step index) rather than the shared wheel-30 SievePrime - see
+// HugeSievePrime's own docstring. Kept as a local alias `SievePrime` so
+// the ring/block plumbing below (written generically against "SievePrime")
+// doesn't need touching.
+const SievePrime = SievePrimeMod.HugeSievePrime;
 
 const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
 
@@ -16,7 +21,7 @@ const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
 // instead of a hardcoded constant.
 const MAX_WHEEL_STEP_FACTOR: usize = blk: {
     var m: usize = 0;
-    for (Comptimes.WHEEL_PATTERNS) |row| {
+    for (Comptimes.WHEEL_PATTERNS_210) |row| {
         for (row) |step| {
             m = @max(m, @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend));
         }
@@ -388,8 +393,8 @@ pub const HugeSievePrimes = struct {
                 const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(SievePrime);
                 for (items[0..fill]) |*sievePrime| {
                     const initialInBucketIndex = sievePrime.initialInBucketIndex;
-                    const wheelStepIndex = sievePrime.wheelStepIndex;
-                    const step = Comptimes.WHEEL_PATTERNS[initialInBucketIndex][wheelStepIndex];
+                    const wheelStepIndex210 = sievePrime.wheelStepIndex210;
+                    const step = Comptimes.WHEEL_PATTERNS_210[initialInBucketIndex][wheelStepIndex210];
 
                     const localBucketIndex = sievePrime.currentBucketIndex - bucketsStart;
                     buckets[localBucketIndex] &= step.bitMask;
@@ -398,7 +403,10 @@ pub const HugeSievePrimes = struct {
                     const advance = initialBucketIndex * @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend);
                     const newBucketIndex = localBucketIndex + advance + bucketsStart;
                     sievePrime.currentBucketIndex = newBucketIndex;
-                    sievePrime.wheelStepIndex = wheelStepIndex +% 1;
+                    // u6 field over a 48-long cycle: not a power of two,
+                    // so (unlike the wheel-30 tiers' u3 +% 1, which wraps
+                    // at 8 for free) this needs an explicit wrap.
+                    sievePrime.wheelStepIndex210 = if (wheelStepIndex210 == Comptimes.ADMISSIBLE_RESIDUES_210.count - 1) 0 else wheelStepIndex210 + 1;
 
                     // segmentsAhead is always in [1, ringLen) here (huge
                     // tier hits at most once per segment, and ringSizeFor
