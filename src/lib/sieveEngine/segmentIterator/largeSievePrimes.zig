@@ -27,20 +27,56 @@ const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
 // split; it hasn't been independently re-derived for the current one.
 const BATCH_SIZE: usize = BuildUtils.GENERAL_PURPOSE_REGISTER_COUNT / 5;
 
-// Primes above MEDIUM_LARGE_THRESHOLD (up to LARGE_HUGE_THRESHOLD, see
-// hugeSievePrimes.zig): a full wheel cycle doesn't reliably fit within a
-// single segment, but more than one individual wheel step still can - a
-// prime near the low end of this range can hit a segment several times.
-// Rather than a bulk-cycle batch loop (unhelpful here) or per-prime
-// comptime-specialized dispatch (measured no different from a flat
-// runtime-indexed layout at this tier's once-per-segment call frequency -
-// see project history), this batches BATCH_SIZE primes together and steps
-// them one wheel-step at a time in lockstep, so their independent loads/
-// stores can overlap instead of fully serializing per prime. Correct for
-// any prime magnitude above medium's own range regardless of exactly where
-// MEDIUM_LARGE_THRESHOLD/LARGE_HUGE_THRESHOLD sit - those only affect how
-// much of this algorithm's more-than-one-hit-per-segment capability
+// Primes above MEDIUM_LARGE_THRESHOLD, up to LARGE_HEAD_THRESHOLD (not
+// LARGE_HUGE_THRESHOLD - see largeHeadSievePrimes.zig for the sparser
+// sub-range above that, and sieveLayoutMath.zig's largeHeadThreshold for
+// the derivation of where the large tier is split): a full wheel cycle
+// doesn't reliably fit within a single segment here, but more than one
+// individual wheel step still can - a prime near the low end of this range
+// can hit a segment several times.
+//
+// This batches BATCH_SIZE primes together and steps them one wheel-step at
+// a time in lockstep, so their independent loads/stores can overlap
+// instead of fully serializing per prime - a real ILP win, but ONLY once
+// its shared step loop actually iterates more than once (the first
+// iteration is pure setup cost - packing each prime's wheel-pattern
+// pointer/indices into the batch's local arrays - not yet any shared
+// work). That's exactly what this sub-range provides and
+// largeHeadSievePrimes.zig's own sub-range doesn't (see largeHeadThreshold's
+// derivation: below it, a worst-case third hit per segment remains
+// possible; at or above it, at most 2 are, mostly 1 in practice). Correct
+// for any prime magnitude above medium's own range regardless of exactly
+// where MEDIUM_LARGE_THRESHOLD/LARGE_HEAD_THRESHOLD sit - those only affect
+// how much of this algorithm's more-than-one-hit-per-segment capability
 // actually gets used.
+//
+// 2026-09-10: split off a second design (largeHeadSievePrimes.zig,
+// (residue, wheel-phase)-bucketed with a comptime-specialized first-step-
+// only fast path, zero per-call setup cost) for the sparser sub-range
+// above LARGE_HEAD_THRESHOLD, by reasoning about *why* each design is
+// fast: this tier's batching needs primes with real multi-hit headroom
+// (this tier's own low end, near MEDIUM_LARGE_THRESHOLD) to earn back its
+// setup cost; the head design has no such setup at all and stays cheap as
+// long as its rare runtime-indexed fallback stays rare (true near
+// LARGE_HUGE_THRESHOLD, where most primes hit once).
+//
+// 2026-09-14: tried swapping the assignment (head taking this tier's own
+// low end, batch taking head's sparser high end) at the user's explicit
+// request - the opposite of the pairing above. Profiled both at a real,
+// ~5s-scale benchmark (perf, N=1e19, a 4.4-billion-wide range-start
+// window - large enough to get a trustworthy sample, unlike the small
+// narrow-window checks used earlier in that same session): swapped,
+// LargeSievePrimes.applyBatch + LargeHeadSievePrimes.apply combined were
+// ~14.6% of total runtime (8.43% applyBatch + 6.15% head apply); reverted
+// back to this (original) assignment, combined self-time dropped to
+// ~12.9% (5.18% applyBatch + 7.76% head apply) - a real, measured ~11%
+// relative reduction in this pair's own combined cost at the same
+// benchmark point, confirming the original derivation (batch on the
+// multi-hit end, head on the single-hit end) rather than the swap.
+// Reverted; kept as the validated assignment. (One run each side, not a
+// repeated/interleaved measurement - the direction is clear and matches
+// the mechanistic prediction, but treat the exact percentages as
+// indicative, not precise, per project convention.)
 // 2026-09-10: replaced a flat sorted array (sortByPosition() + an
 // activate() early-break scan needing that sort) with the same ring-buffer
 // idea HugeSievePrimes already uses (see its own docstring and project
@@ -83,17 +119,19 @@ pub const LargeSievePrimes = struct {
     pendingStart: usize,
 
     pub fn init(allocator: std.mem.Allocator) !LargeSievePrimes {
-        const ringLen = ringSizeFor(BuildUtils.LARGE_HUGE_THRESHOLD);
+        const ringLen = ringSizeFor(BuildUtils.LARGE_HEAD_THRESHOLD);
         const ring = try allocator.alloc(std.ArrayList(SievePrime), ringLen);
         for (ring) |*bucket| bucket.* = .empty;
 
-        // Every large-tier prime is <= LARGE_HUGE_THRESHOLD, a fixed
-        // build-time constant - Estimates.primeCountUpperBound of it is a
-        // safe (if slightly generous - it bounds the whole [0, threshold]
-        // prefix, not just this tier's own slice above MEDIUM_LARGE_THRESHOLD)
-        // upper bound on this tier's total population, reserved once here
-        // for `active` since every entry ends up there eventually.
-        const capacity = Estimates.primeCountUpperBound(BuildUtils.LARGE_HUGE_THRESHOLD);
+        // Every large-tier prime is <= LARGE_HEAD_THRESHOLD (this tier
+        // covers the sub-range closest to medium - see this file's own top
+        // comment), a fixed build-time constant -
+        // Estimates.primeCountUpperBound of it is a safe (if slightly
+        // generous - it bounds the whole [0, threshold] prefix, not just
+        // this tier's own slice above MEDIUM_LARGE_THRESHOLD) upper bound on
+        // this tier's total population, reserved once here for `active`
+        // since every entry ends up there eventually.
+        const capacity = Estimates.primeCountUpperBound(BuildUtils.LARGE_HEAD_THRESHOLD);
         return LargeSievePrimes{
             .active = try std.ArrayList(SievePrime).initCapacity(allocator, capacity),
             .ring = ring,

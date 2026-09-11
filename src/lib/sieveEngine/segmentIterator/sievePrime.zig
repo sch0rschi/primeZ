@@ -144,3 +144,33 @@ pub const HugeSievePrime = packed struct {
         };
     }
 };
+
+/// Ring/Block-resident encoding of a huge-tier sieving prime - see
+/// hugeSievePrimes.zig's own top comment for the full derivation, and its
+/// SEGMENT_ELEMS comptime assertion for the invariant this relies on.
+/// Stores only the LOCAL offset within whichever future segment this
+/// entry is filed to, never a full 64-bit absolute position - mirroring
+/// primesieve's own SievingPrime (bench/primesieve/include/primesieve/
+/// Bucket.hpp): which segment an entry belongs to is already implicit in
+/// which ring slot/Block holds it, so a stored absolute position (as
+/// HugeSievePrime itself still uses) is pure waste for anything already
+/// placed in the ring.
+///
+/// `localOffset: u23` safely covers any buildable SEGMENT_ELEMS
+/// (build.zig's floorPow2Clamped caps opt_segment_size_in_kb at 8192 KiB,
+/// i.e. SEGMENT_ELEMS <= 2^23) - the exact same 23-bit budget primesieve's
+/// own MAX_MULTIPLEINDEX uses, not a coincidence: both bound "offset
+/// within one sieve segment" for a sieve sized the same way (a power-of-
+/// two byte count derived from cache size). 23+32+3+6 = 64 bits exactly -
+/// one native word, HALF of HugeSievePrime's own 128-bit/16-byte packed
+/// size. HugeSievePrime itself is kept (unchanged) for the discovery-time
+/// API surface and HugeSievePrimes.list (the pending overflow band, whose
+/// entries have no segment assignment yet and so still need the full
+/// absolute position) - this type is only ever constructed once a segment
+/// assignment (and thus a ring slot) is already known.
+pub const HugeSievePrimeSlot = packed struct {
+    localOffset: u23,
+    initialBucketIndex: u32,
+    initialInBucketIndex: u3,
+    wheelStepIndex210: u6,
+};

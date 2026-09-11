@@ -12,6 +12,7 @@ const HugeSievePrime = SievePrimeMod.HugeSievePrime;
 const SmallSievePrimes = @import("smallSievePrimes.zig").SmallSievePrimes;
 const MediumSievePrimes = @import("mediumSievePrimes.zig").MediumSievePrimes;
 const LargeSievePrimes = @import("largeSievePrimes.zig").LargeSievePrimes;
+const LargeHeadSievePrimes = @import("largeHeadSievePrimes.zig").LargeHeadSievePrimes;
 const HugeSievePrimes = @import("hugeSievePrimes.zig").HugeSievePrimes;
 
 const ALIGNMENT = std.mem.Alignment.@"8";
@@ -19,6 +20,7 @@ const ALIGNMENT = std.mem.Alignment.@"8";
 const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
 const SMALL_MEDIUM_THRESHOLD: usize = BuildUtils.SMALL_MEDIUM_THRESHOLD;
 const MEDIUM_LARGE_THRESHOLD: usize = BuildUtils.MEDIUM_LARGE_THRESHOLD;
+const LARGE_HEAD_THRESHOLD: usize = BuildUtils.LARGE_HEAD_THRESHOLD;
 const LARGE_HUGE_THRESHOLD: usize = BuildUtils.LARGE_HUGE_THRESHOLD;
 
 const BUCKET_BITS = @bitSizeOf(Types.SIEVE_BUCKET_TYPE);
@@ -44,6 +46,7 @@ pub const SegmentIterator = struct {
     small: SmallSievePrimes,
     medium: MediumSievePrimes,
     large: LargeSievePrimes,
+    largeHead: LargeHeadSievePrimes,
     huge: HugeSievePrimes,
 
     pub noinline fn init(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize) !SegmentIterator {
@@ -85,6 +88,7 @@ pub const SegmentIterator = struct {
             .small = try SmallSievePrimes.init(allocator),
             .medium = try MediumSievePrimes.init(allocator),
             .large = try LargeSievePrimes.init(allocator),
+            .largeHead = try LargeHeadSievePrimes.init(allocator),
             .huge = try HugeSievePrimes.init(allocator, rootPrime),
         };
 
@@ -105,6 +109,7 @@ pub const SegmentIterator = struct {
             &self.small,
             &self.medium,
             &self.large,
+            &self.largeHead,
             &self.huge,
             self.buckets,
             self.bucketsStart,
@@ -128,6 +133,7 @@ pub const SegmentIterator = struct {
         self.small.deinit(self.allocator);
         self.medium.deinit(self.allocator);
         self.large.deinit(self.allocator);
+        self.largeHead.deinit(self.allocator);
         self.huge.deinit(self.allocator);
         self.* = undefined;
     }
@@ -148,7 +154,7 @@ pub const SegmentIterator = struct {
             PreSieve.fill(self.buckets, self.bucketsStart);
         }
 
-        try crossOffSegment(self.allocator, &self.small, &self.medium, &self.large, &self.huge, self.buckets, self.bucketsStart, self.bucketsEndExclusive);
+        try crossOffSegment(self.allocator, &self.small, &self.medium, &self.large, &self.largeHead, &self.huge, self.buckets, self.bucketsStart, self.bucketsEndExclusive);
 
         return Segment{
             .containerStart = self.bucketsStart / 8,
@@ -169,6 +175,7 @@ fn crossOffSegment(
     small: *SmallSievePrimes,
     medium: *MediumSievePrimes,
     large: *LargeSievePrimes,
+    largeHead: *LargeHeadSievePrimes,
     huge: *HugeSievePrimes,
     buckets: Types.SIEVE_BUCKETS_TYPE,
     bucketsStart: usize,
@@ -181,6 +188,11 @@ fn crossOffSegment(
 
     try large.activate(allocator, bucketsStart);
     large.apply(buckets, bucketsStart, bucketsEndExclusive);
+
+    // No activate() - like medium, this tier is a bucket-and-refile design
+    // (not ring-based), so a not-yet-due entry just sits until apply()'s own
+    // readiness check lets it through - see largeHeadSievePrimes.zig.
+    largeHead.apply(buckets, bucketsStart, bucketsEndExclusive);
 
     try huge.activate(allocator, bucketsStart);
     try huge.apply(allocator, buckets, bucketsStart, bucketsEndExclusive);
@@ -231,6 +243,7 @@ noinline fn discoverSievingPrimes(
     small: *SmallSievePrimes,
     medium: *MediumSievePrimes,
     large: *LargeSievePrimes,
+    largeHead: *LargeHeadSievePrimes,
     huge: *HugeSievePrimes,
     outputBuckets: Types.SIEVE_BUCKETS_TYPE,
     outputBucketsStart: usize,
@@ -267,6 +280,8 @@ noinline fn discoverSievingPrimes(
     defer selfMedium.deinit(allocator);
     var selfLarge = try LargeSievePrimes.init(allocator);
     defer selfLarge.deinit(allocator);
+    var selfLargeHead = try LargeHeadSievePrimes.init(allocator);
+    defer selfLargeHead.deinit(allocator);
     var selfHuge = try HugeSievePrimes.init(allocator, dsp);
     defer selfHuge.deinit(allocator);
 
@@ -289,7 +304,7 @@ noinline fn discoverSievingPrimes(
             PreSieve.fill(selfBuckets, selfBucketsStart);
         }
 
-        try crossOffSegment(allocator, &selfSmall, &selfMedium, &selfLarge, &selfHuge, selfBuckets, selfBucketsStart, selfBucketsEndExclusive);
+        try crossOffSegment(allocator, &selfSmall, &selfMedium, &selfLarge, &selfLargeHead, &selfHuge, selfBuckets, selfBucketsStart, selfBucketsEndExclusive);
 
         const containerStart = selfBucketsStart / 8;
         const containerEndExclusive = selfBucketsEndExclusive / 8;
@@ -388,11 +403,26 @@ noinline fn discoverSievingPrimes(
                     // slot in this same loop) - worth paying only for a
                     // target that's actually going to be kept.
                     const target = SievePrimeMod.firstAdmissibleMultiple(prime, startInclusive);
-                    if (prime > MEDIUM_LARGE_THRESHOLD) {
-                        // Same reasoning as the huge-tier filter above: a
-                        // large-tier prime whose first target already lies
-                        // at or past the query's own end will never cross
-                        // off anything in this query.
+                    if (prime > LARGE_HEAD_THRESHOLD) {
+                        // largeHead covers the sub-range closest to huge
+                        // (LARGE_HEAD_THRESHOLD..LARGE_HUGE_THRESHOLD - see
+                        // largeHeadSievePrimes.zig's own top comment). Its
+                        // bucket-and-refile design needs no discard-out-of-
+                        // range filter: an entry not yet due just gets
+                        // refiled unchanged next segment instead of
+                        // spending a bounded ring/pending slot the way
+                        // large/huge's own filters exist to protect.
+                        const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
+                        largeHead.add(realSievePrime);
+                    } else if (prime > MEDIUM_LARGE_THRESHOLD) {
+                        // large/batch covers the sub-range closest to
+                        // medium (MEDIUM_LARGE_THRESHOLD..LARGE_HEAD_THRESHOLD
+                        // - see largeSievePrimes.zig's own top comment).
+                        // Same discard-out-of-range reasoning as the
+                        // huge-tier filter above: a ring-based tier's
+                        // first target already lying at or past the
+                        // query's own end will never cross off anything in
+                        // this query.
                         if (target.bucketIndex < queryBucketsLength) {
                             const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
                             try large.add(allocator, realSievePrime, outputBucketsStart);
@@ -427,7 +457,9 @@ noinline fn discoverSievingPrimes(
                         try selfHuge.add(allocator, selfHugeSievePrime, selfBucketsStart);
                     } else {
                         const selfSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, 0);
-                        if (prime > MEDIUM_LARGE_THRESHOLD) {
+                        if (prime > LARGE_HEAD_THRESHOLD) {
+                            selfLargeHead.add(selfSievePrime);
+                        } else if (prime > MEDIUM_LARGE_THRESHOLD) {
                             try selfLarge.add(allocator, selfSievePrime, selfBucketsStart);
                         } else if (prime > SMALL_MEDIUM_THRESHOLD) {
                             selfMedium.add(selfSievePrime);

@@ -9,6 +9,7 @@ const L2_CACHE_SIZE_IN_KB = "l2_cache_size_in_kb";
 const OPT_SEGMENT_SIZE_IN_KB = "opt_segment_size_in_kb";
 const GENERAL_PURPOSE_REGISTER_COUNT = "general_purpose_register_count";
 const PRIME_COUNTS_BY_RESIDUE = "prime_counts_by_residue";
+const LARGE_HEAD_PRIME_COUNTS_BY_RESIDUE = "large_head_prime_counts_by_residue";
 const PRESIEVE_PATTERNS_BLOB = "presieve_patterns_blob";
 const PRESIEVE_GROUPS = "presieve_groups";
 
@@ -83,6 +84,15 @@ pub fn build(b: *std.Build) void {
             SieveLayoutMath.mediumLargeThreshold(opt_segment_size_in_kb),
         ),
     );
+    options.addOption(
+        [RESIDUE_CLASS_COUNT]usize,
+        LARGE_HEAD_PRIME_COUNTS_BY_RESIDUE,
+        computePrimeCountsByResidue(
+            b,
+            SieveLayoutMath.largeHeadThreshold(opt_segment_size_in_kb),
+            SieveLayoutMath.largeHugeThreshold(opt_segment_size_in_kb),
+        ),
+    );
     options.addOption([]const []const usize, PRESIEVE_GROUPS, presieve_groups);
     options.addOption([]const u8, PRESIEVE_PATTERNS_BLOB, presieve_patterns_blob);
 
@@ -105,6 +115,11 @@ pub fn build(b: *std.Build) void {
         [RESIDUE_CLASS_COUNT]usize,
         PRIME_COUNTS_BY_RESIDUE,
         computePrimeCountsByResidue(b, SieveLayoutMath.smallMediumThreshold(4, 4), SieveLayoutMath.mediumLargeThreshold(4)),
+    );
+    test_options.addOption(
+        [RESIDUE_CLASS_COUNT]usize,
+        LARGE_HEAD_PRIME_COUNTS_BY_RESIDUE,
+        computePrimeCountsByResidue(b, SieveLayoutMath.largeHeadThreshold(4), SieveLayoutMath.largeHugeThreshold(4)),
     );
     test_options.addOption([]const []const usize, PRESIEVE_GROUPS, presieve_groups);
     test_options.addOption([]const u8, PRESIEVE_PATTERNS_BLOB, presieve_patterns_blob);

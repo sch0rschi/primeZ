@@ -16,9 +16,11 @@ pub const STRIPE_ELEMS: usize = SieveLayoutMath.stripeElems(config.l1_cache_size
 pub const SMALL_MEDIUM_THRESHOLD: usize =
     SieveLayoutMath.smallMediumThreshold(config.l1_cache_size_in_kb, config.opt_segment_size_in_kb);
 pub const MEDIUM_LARGE_THRESHOLD: usize = SieveLayoutMath.mediumLargeThreshold(config.opt_segment_size_in_kb);
+pub const LARGE_HEAD_THRESHOLD: usize = SieveLayoutMath.largeHeadThreshold(config.opt_segment_size_in_kb);
 pub const LARGE_HUGE_THRESHOLD: usize = SieveLayoutMath.largeHugeThreshold(config.opt_segment_size_in_kb);
 
 pub const PRIME_COUNTS_BY_RESIDUE: [RESIDUE_CLASS_COUNT]usize = config.prime_counts_by_residue;
+pub const LARGE_HEAD_PRIME_COUNTS_BY_RESIDUE: [RESIDUE_CLASS_COUNT]usize = config.large_head_prime_counts_by_residue;
 
 pub const PRESIEVE_GROUPS: []const []const usize = config.presieve_groups;
 

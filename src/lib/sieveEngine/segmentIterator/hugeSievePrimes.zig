@@ -7,11 +7,28 @@ const SievePrimeMod = @import("sievePrime.zig");
 // Huge tier uses its own record type (wheel-210 stepping, a wider 48-phase
 // step index) rather than the shared wheel-30 SievePrime - see
 // HugeSievePrime's own docstring. Kept as a local alias `SievePrime` so
-// the ring/block plumbing below (written generically against "SievePrime")
+// the discovery-facing API (add()'s parameter, `list`'s element type)
 // doesn't need touching.
 const SievePrime = SievePrimeMod.HugeSievePrime;
+// Ring/Block-resident encoding (localOffset instead of a full absolute
+// position) - see its own docstring in sievePrime.zig and this file's own
+// struct docstring below for why storage uses this, not SievePrime,
+// everywhere except `list`.
+const RingEntry = SievePrimeMod.HugeSievePrimeSlot;
 
 const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
+
+// RingEntry.localOffset is a u23 - safe only as long as SEGMENT_ELEMS
+// never exceeds 2^23 (see that field's own docstring for the derivation).
+// build.zig's floorPow2Clamped already caps opt_segment_size_in_kb at
+// 8192 KiB (SEGMENT_ELEMS <= 2^23) today, but that cap lives in a
+// different file with no compile-time link to this one - this assertion
+// is the tripwire if it's ever loosened without updating this field width
+// too, catching it at compile time instead of a silent, catastrophic
+// wraparound in release builds.
+comptime {
+    if (SEGMENT_ELEMS > 1 << 23) @compileError("SEGMENT_ELEMS exceeds RingEntry.localOffset's u23 budget - widen that field before raising this bound");
+}
 
 // The largest single-step advance any tracked prime can ever make, in
 // buckets: WHEEL_PATTERNS' own worst-case divMultiplicator/residueAddend,
@@ -83,9 +100,9 @@ pub fn ringSizeFor(maxPrime: usize) usize {
 //      slot is drained mid-fill by apply()) - never touched on every
 //      append the way the length field was in the first two iterations.
 const BLOCK_BYTES: usize = 8 * 1024; // matches primesieve's own config::BUCKET_BYTES
-const BLOCK_HEADER_BYTES: usize = @sizeOf([*]SievePrime) + @sizeOf(?*anyopaque); // end + next
-const BLOCK_LEN: usize = (BLOCK_BYTES - BLOCK_HEADER_BYTES) / @sizeOf(SievePrime);
-const BLOCK_PAD_BYTES: usize = BLOCK_BYTES - BLOCK_HEADER_BYTES - BLOCK_LEN * @sizeOf(SievePrime);
+const BLOCK_HEADER_BYTES: usize = @sizeOf([*]RingEntry) + @sizeOf(?*anyopaque); // end + next
+const BLOCK_LEN: usize = (BLOCK_BYTES - BLOCK_HEADER_BYTES) / @sizeOf(RingEntry);
+const BLOCK_PAD_BYTES: usize = BLOCK_BYTES - BLOCK_HEADER_BYTES - BLOCK_LEN * @sizeOf(RingEntry);
 const BLOCK_ALIGNMENT = std.mem.Alignment.fromByteUnits(BLOCK_BYTES);
 
 // `extern struct`, not a plain struct: the isFull/blockOf arithmetic below
@@ -105,19 +122,19 @@ const Block = extern struct {
     // sites). Meaningless/stale for a block still being written to (its
     // fullness is instead derived on demand from the live write-cursor
     // itself, never stored here until sealing).
-    end: [*]SievePrime,
+    end: [*]RingEntry,
     next: ?*Block,
-    // Raw bytes, not `[BLOCK_LEN]SievePrime` directly: SievePrime is a
-    // packed struct whose bit width (102 bits) isn't a size extern structs
-    // can embed as an array element (Zig rejects it - "unspecified
-    // signedness" - since there's no C-ABI-standard integer that width).
-    // Reinterpreted through items() instead; explicitly aligned to match
-    // SievePrime's own (16, from its 128-bit packed-struct backing integer)
-    // since a plain byte array's alignment wouldn't otherwise be enough for
-    // that cast.
-    itemsBytes: [BLOCK_LEN * @sizeOf(SievePrime) + BLOCK_PAD_BYTES]u8 align(@alignOf(SievePrime)) = undefined,
+    // Raw bytes, not `[BLOCK_LEN]RingEntry` directly: RingEntry is a
+    // packed struct whose bit width (64 bits) IS a size extern structs can
+    // embed directly, but keeping the same raw-bytes-plus-items()-cast
+    // shape as before (rather than special-casing this one) costs nothing
+    // and stays consistent if a future field addition ever pushes it back
+    // off a byte boundary. Explicitly aligned to match RingEntry's own (8,
+    // from its 64-bit packed-struct backing integer) since a plain byte
+    // array's alignment wouldn't otherwise be enough for that cast.
+    itemsBytes: [BLOCK_LEN * @sizeOf(RingEntry) + BLOCK_PAD_BYTES]u8 align(@alignOf(RingEntry)) = undefined,
 
-    fn items(self: *Block) [*]SievePrime {
+    fn items(self: *Block) [*]RingEntry {
         return @ptrCast(&self.itemsBytes);
     }
 };
@@ -135,7 +152,7 @@ comptime {
 // every Block is BLOCK_BYTES-aligned (see allocateBlockPool) and exactly
 // BLOCK_BYTES large, so a write cursor lands exactly on a BLOCK_BYTES
 // boundary if and only if it has walked off the end of its block.
-fn isFull(ptr: [*]SievePrime) bool {
+fn isFull(ptr: [*]RingEntry) bool {
     return @intFromPtr(ptr) % BLOCK_BYTES == 0;
 }
 
@@ -146,7 +163,7 @@ fn isFull(ptr: [*]SievePrime) bool {
 // looks like the *next* Block's address - rounding that down naively would
 // misidentify the (unrelated, possibly not-yet-allocated) next Block
 // instead of the one that was actually just written to.
-fn blockOf(ptr: [*]SievePrime) *Block {
+fn blockOf(ptr: [*]RingEntry) *Block {
     var address = @intFromPtr(ptr);
     address -= 1;
     address -= address % BLOCK_BYTES;
@@ -166,7 +183,11 @@ const MAX_POOL_COUNT: usize = 1 << 16;
 // So a huge sieving prime crosses off at most once per segment: no loop
 // (a `while` would run 0 or 1 times, so an `if` suffices), and no benefit
 // to batching several primes together the way largeSievePrimes.zig does to
-// pipeline a loop's iterations - there is no loop to pipeline.
+// pipeline a loop's iterations - there is no loop to pipeline. Tried
+// pairing 2 entries per apply() iteration anyway (primesieve's own
+// EratBig::crossOff does exactly this, "to increase instruction level
+// parallelism") - measured no real win, see apply()'s own comment for the
+// numbers; reverted.
 //
 // Storage is a primesieve-EratBig-style ring buffer of buckets, one per
 // upcoming segment up to `ringSizeFor(maxPrime)` segments ahead - that
@@ -180,6 +201,29 @@ const MAX_POOL_COUNT: usize = 1 << 16;
 // a normal linked list, nothing here stores an explicit head/tail pair -
 // `ringWritePos[i]` (the live write cursor) is enough to recover
 // everything else on demand (see Block's docstring, blockOf, isFull).
+//
+// 2026-09-14: Block/ring storage uses RingEntry (sievePrime.zig's
+// HugeSievePrimeSlot), not SievePrime itself - found by comparing directly
+// against primesieve's own EratBig/SievingPrime (Bucket.hpp) after a user
+// question about a wide-window benchmark gap: their SievingPrime is 8
+// bytes (two plain u32 words), ours was 16 (a packed struct whose
+// currentBucketIndex stores a full 64-bit ABSOLUTE position). The
+// realization: exactly like primesieve, which ring slot/Block an entry
+// lives in already tells you which segment it's due in - so storing that
+// again, as an absolute position, inside the entry itself is pure waste
+// for anything already placed in the ring. RingEntry stores only the
+// LOCAL offset within its eventual segment instead (u23, safely covers any
+// buildable SEGMENT_ELEMS - see this file's own comptime assertion),
+// shrinking the ring-resident record to 64 bits exactly - one native word,
+// matching primesieve's size precisely. SievePrime itself (the wide,
+// absolute-position type) is unchanged and still used for the discovery-
+// time API surface and `list` (the pending overflow band below - its
+// entries have no segment assignment yet, so still need the full
+// position); toRingEntry() converts to RingEntry at the one point a
+// segment assignment (and thus a ring slot) becomes known, in add() and
+// activate(). See project memory large_tier_head_batch_split (or a
+// successor memory covering this specific investigation) for the
+// before/after comparison against primesieve.
 //
 // The one thing the ring can't hold is a prime whose first target is still
 // arbitrarily far from bucketsStart: every SievePrime is already targeting
@@ -211,7 +255,7 @@ pub const HugeSievePrimes = struct {
     // belongs to, whether that Block is full, where an earlier, already-
     // sealed Block's valid data ends) is recovered on demand rather than
     // tracked separately - see Block's own docstring for why that matters.
-    ringWritePos: []?[*]SievePrime,
+    ringWritePos: []?[*]RingEntry,
     ringHead: usize,
 
     // Blocks returned here once a ring slot is fully drained by apply()
@@ -238,7 +282,7 @@ pub const HugeSievePrimes = struct {
 
     pub fn init(allocator: std.mem.Allocator, maxPrime: usize) !HugeSievePrimes {
         const ringLen = ringSizeFor(maxPrime);
-        const ringWritePos = try allocator.alloc(?[*]SievePrime, ringLen);
+        const ringWritePos = try allocator.alloc(?[*]RingEntry, ringLen);
         @memset(ringWritePos, null);
 
         return HugeSievePrimes{
@@ -285,7 +329,7 @@ pub const HugeSievePrimes = struct {
     /// given - seals off the block it belongs to (recording where its
     /// valid data ends, for apply()'s later read) and links the fresh
     /// block in front of it. Mirrors primesieve's MemoryPool::addBucket.
-    fn addBlock(self: *HugeSievePrimes, allocator: std.mem.Allocator, sealedWritePos: ?[*]SievePrime) ![*]SievePrime {
+    fn addBlock(self: *HugeSievePrimes, allocator: std.mem.Allocator, sealedWritePos: ?[*]RingEntry) ![*]RingEntry {
         if (self.freeBlocks == null) try self.allocateBlockPool(allocator);
         const fresh = self.freeBlocks.?;
         self.freeBlocks = fresh.next;
@@ -304,11 +348,28 @@ pub const HugeSievePrimes = struct {
     /// operation add()/activate()/apply() ever need to place an entry.
     /// Mirrors primesieve's `buckets_[segment]++->set(...); if
     /// (Bucket::isFull(...)) addBucket(...)`.
-    fn storeSievingPrime(self: *HugeSievePrimes, allocator: std.mem.Allocator, slot: usize, sievePrime: *const SievePrime) !void {
+    fn storeSievingPrime(self: *HugeSievePrimes, allocator: std.mem.Allocator, slot: usize, entry: *const RingEntry) !void {
         const wp = self.ringWritePos[slot] orelse try self.addBlock(allocator, null);
-        wp[0] = sievePrime.*;
+        wp[0] = entry.*;
         const next = wp + 1;
         self.ringWritePos[slot] = if (isFull(next)) try self.addBlock(allocator, next) else next;
+    }
+
+    /// Converts an already-placed (segment assignment known) sievePrime
+    /// into its ring/Block-resident encoding - see RingEntry's own
+    /// docstring. `segmentsAhead` is always the caller's already-computed
+    /// `(sievePrime.currentBucketIndex - bucketsStart) / SEGMENT_ELEMS`
+    /// (destinationOf's result, or activate()'s equivalent inline
+    /// computation) - passed in rather than recomputed, since every call
+    /// site already has it on hand from deciding which ring slot to use.
+    fn toRingEntry(sievePrime: SievePrime, bucketsStart: usize, segmentsAhead: usize) RingEntry {
+        const localOffset = sievePrime.currentBucketIndex - bucketsStart - segmentsAhead * SEGMENT_ELEMS;
+        return RingEntry{
+            .localOffset = @intCast(localOffset),
+            .initialBucketIndex = sievePrime.initialBucketIndex,
+            .initialInBucketIndex = sievePrime.initialInBucketIndex,
+            .wheelStepIndex210 = sievePrime.wheelStepIndex210,
+        };
     }
 
     /// Places a freshly-discovered prime directly into its final position -
@@ -337,7 +398,8 @@ pub const HugeSievePrimes = struct {
         const segmentsAhead = destinationOf(sievePrime, ringLen, bucketsStart);
         if (segmentsAhead < ringLen) {
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
-            try self.storeSievingPrime(allocator, slot, &sievePrime);
+            const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
+            try self.storeSievingPrime(allocator, slot, &entry);
         } else {
             try self.list.append(allocator, sievePrime);
         }
@@ -364,7 +426,8 @@ pub const HugeSievePrimes = struct {
             if (segmentsAhead >= ringLen) break;
 
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
-            try self.storeSievingPrime(allocator, slot, &sievePrime);
+            const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
+            try self.storeSievingPrime(allocator, slot, &entry);
             self.pendingStart += 1;
         }
     }
@@ -377,6 +440,15 @@ pub const HugeSievePrimes = struct {
         bucketsEndExclusive: usize,
     ) !void {
         _ = bucketsEndExclusive; // every prime in this ring slot is already known to fire this exact segment.
+        // RingEntry.localOffset already IS the position within THIS
+        // segment - unlike the old absolute-position encoding, nothing
+        // here ever needs bucketsStart (see RingEntry's own docstring and
+        // toRingEntry): buckets[] is indexed directly, and the next
+        // segment assignment falls out of localOffset+advance divided by
+        // SEGMENT_ELEMS, exactly mirroring primesieve's own EratBig::crossOff
+        // (`segment = multipleIndex >> log2SieveSize; multipleIndex &=
+        // moduloSieveSize;`).
+        _ = bucketsStart;
         const ringLen = self.ringWritePos.len;
         const cursor = self.ringHead;
 
@@ -390,34 +462,41 @@ pub const HugeSievePrimes = struct {
             var block: ?*Block = headBlock;
             while (block) |b| {
                 const items = b.items();
-                const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(SievePrime);
-                for (items[0..fill]) |*sievePrime| {
-                    const initialInBucketIndex = sievePrime.initialInBucketIndex;
-                    const wheelStepIndex210 = sievePrime.wheelStepIndex210;
-                    const step = Comptimes.WHEEL_PATTERNS_210[initialInBucketIndex][wheelStepIndex210];
+                const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(RingEntry);
 
-                    const localBucketIndex = sievePrime.currentBucketIndex - bucketsStart;
-                    buckets[localBucketIndex] &= step.bitMask;
-
-                    const initialBucketIndex = @as(usize, sievePrime.initialBucketIndex);
-                    const advance = initialBucketIndex * @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend);
-                    const newBucketIndex = localBucketIndex + advance + bucketsStart;
-                    sievePrime.currentBucketIndex = newBucketIndex;
-                    // u6 field over a 48-long cycle: not a power of two,
-                    // so (unlike the wheel-30 tiers' u3 +% 1, which wraps
-                    // at 8 for free) this needs an explicit wrap.
-                    sievePrime.wheelStepIndex210 = if (wheelStepIndex210 == Comptimes.ADMISSIBLE_RESIDUES_210.count - 1) 0 else wheelStepIndex210 + 1;
-
+                // 2026-09-14: tried pairing 2 entries per iteration here
+                // (mirroring primesieve's own EratBig::crossOff, "Process
+                // 2 sieving primes per loop iteration to increase
+                // instruction level parallelism") after comparing directly
+                // against primesieve's source. Measured flat-to-very-
+                // slightly-worse (perf: HugeSievePrimes.apply's self-time
+                // share and absolute cycle count both ~unchanged, within
+                // noise; 5-rep wall-clock min unchanged) at the same 1e19/
+                // 4.4B-wide-window benchmark this session's other huge-tier
+                // change (RingEntry - see this file's own struct
+                // docstring) measured a real ~28% win on. Reverted the
+                // pairing; kept the single-entry extraction (processOne)
+                // below since it's equivalent, cleaner code either way.
+                // Consistent with a prior finding in this project's history
+                // (project memory huge_tier_bucket_list_idea's "radical
+                // mode" round): this CPU's out-of-order execution already
+                // extracts good ILP from primeZ's serial per-entry loops
+                // without an explicit batching hint, unlike primesieve's
+                // apparent target hardware - don't re-attempt this specific
+                // idea without new evidence the loop is actually ILP-
+                // starved here.
+                for (items[0..fill]) |*entry| {
+                    const segmentsAhead = processOne(buckets, entry);
                     // segmentsAhead is always in [1, ringLen) here (huge
                     // tier hits at most once per segment, and ringSizeFor
                     // bounds the max single-step advance), so this slot is
                     // never `cursor` itself - safe to append into it while
                     // iterating cursor's own block list.
-                    const segmentsAhead = (newBucketIndex - bucketsStart) / SEGMENT_ELEMS;
                     std.debug.assert(segmentsAhead >= 1 and segmentsAhead < ringLen);
                     const slot = (cursor + segmentsAhead) & (ringLen - 1);
-                    try self.storeSievingPrime(allocator, slot, sievePrime);
+                    try self.storeSievingPrime(allocator, slot, entry);
                 }
+
                 const next = b.next;
                 self.freeBlock(b);
                 block = next;
@@ -428,3 +507,34 @@ pub const HugeSievePrimes = struct {
         self.ringHead = (cursor + 1) & (ringLen - 1);
     }
 };
+
+/// Crosses off one entry's current occurrence and advances it to its next
+/// one (localOffset + wheelStepIndex210), returning how many segments
+/// ahead that next occurrence falls - the caller still owns placing it
+/// into the right ring slot (see apply()'s two call sites: a batched pair
+/// and a single leftover). Split out so apply()'s paired loop can call it
+/// twice back to back with no data dependency between the two calls,
+/// rather than duplicating this body by hand the way primesieve's own
+/// crossOff does - `inline` makes the two calls flatten into the same
+/// straight-line shape either way.
+inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: *RingEntry) usize {
+    const initialInBucketIndex = entry.initialInBucketIndex;
+    const wheelStepIndex210 = entry.wheelStepIndex210;
+    const step = Comptimes.WHEEL_PATTERNS_210[initialInBucketIndex][wheelStepIndex210];
+
+    const localOffset: usize = entry.localOffset;
+    buckets[localOffset] &= step.bitMask;
+
+    const initialBucketIndex = @as(usize, entry.initialBucketIndex);
+    const advance = initialBucketIndex * @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend);
+    const newOffset = localOffset + advance;
+    const segmentsAhead = newOffset / SEGMENT_ELEMS;
+
+    entry.localOffset = @intCast(newOffset - segmentsAhead * SEGMENT_ELEMS);
+    // u6 field over a 48-long cycle: not a power of two, so (unlike the
+    // wheel-30 tiers' u3 +% 1, which wraps at 8 for free) this needs an
+    // explicit wrap.
+    entry.wheelStepIndex210 = if (wheelStepIndex210 == Comptimes.ADMISSIBLE_RESIDUES_210.count - 1) 0 else wheelStepIndex210 + 1;
+
+    return segmentsAhead;
+}
