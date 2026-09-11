@@ -7,36 +7,11 @@ pub const SievePrime = packed struct {
     initialInBucketIndex: u3,
     wheelStepIndex: u3,
 
-    /// Builds a SievePrime for the (bucketIndex, inBucketIndex)-encoded
-    /// prime (its own numeric value passed in as `prime` - the caller
-    /// already has it, from the very same bit-scan that produced
-    /// bucketIndex/inBucketIndex, to classify which tier it belongs in and
-    /// check PreSieve.isPreSieved - recomputing it here via
-    /// admissibleNumberFromBitIndex would be a second division-plus-lookup
-    /// for no reason), targeting its first admissible multiple that is >=
-    /// minRawNumberInclusive (never below prime^2 - smaller multiples are
-    /// always already handled by smaller sieving primes). Discovery always
-    /// finds primes via a 0-based scan (see SegmentIterator's nested
-    /// sieving-prime discovery), but the target this prime is first needed
-    /// at is computed directly relative to whatever range-start the caller
-    /// actually asked for - passing 0 here reduces to "first needed at
-    /// prime^2", the every-day case. There is deliberately no separate
-    /// "discover relative to 0, then re-seed relative to the real start"
-    /// step: computing the real target once, at discovery time, is exactly
-    /// as cheap as computing a throwaway one relative to 0 would have been
-    /// - see project memory huge_tier_bucket_list_idea for the history of
-    /// why this used to be a two-step process.
     pub fn from(prime: usize, bucketIndex: usize, inBucketIndex: u3, minRawNumberInclusive: usize) SievePrime {
         const target = firstAdmissibleMultiple(prime, minRawNumberInclusive);
         return fromTarget(target, bucketIndex, inBucketIndex);
     }
 
-    /// Builds the packed struct from an already-computed target - lets a
-    /// caller check target.bucketIndex (a plain, unpacked usize) before
-    /// paying to assemble the packed bit layout at all, for a target it
-    /// might end up discarding without ever needing the packed form (see
-    /// SegmentIterator's discoverSievingPrimes, which discards a target
-    /// outside the query's own range before ever calling this).
     pub fn fromTarget(target: AdmissibleMultiple, bucketIndex: usize, inBucketIndex: u3) SievePrime {
         return SievePrime{
             .currentBucketIndex = target.bucketIndex,
@@ -58,32 +33,12 @@ pub const AdmissibleMultiple = struct {
 
 /// Finds the first admissible (coprime-to-30) multiple of `prime` that is
 /// >= max(prime^2, minRawNumberInclusive), and the wheelStepIndex it
-/// resumes at.
-///
-/// admissible multiples of `prime` correspond exactly to k where
-/// gcd(k, 30) == 1 (since gcd(prime, 30) == 1, gcd(prime*k, 30) ==
-/// gcd(k, 30)) - so we need the smallest admissible k >= minK. Rather than
-/// a runtime scan (this used to be a `while` loop advancing k one step at
-/// a time until ADMISSIBLE_RESIDUES.check[k % 30] - profiled as the single
-/// hottest cost in a huge-magnitude range-start query, likely branch
-/// mispredicts from the data-dependent early-out, see project memory
-/// huge_tier_bucket_list_idea) this is a single table lookup:
-/// ADMISSIBLE_RESIDUES.reverseMap[r] is already, by construction (see
-/// buildAdmissibleResidues), the index of the smallest admissible residue
-/// >= r within [0, WHEEL_CIRCUMFERENCE) - true whether r itself is
-/// admissible or not, and never needs to wrap into the next cycle because
-/// WHEEL_CIRCUMFERENCE - 1 is always admissible (gcd(n, n-1) == 1 for any
-/// n, so the wheel's own top residue is always coprime to it). So
-/// ADMISSIBLE_RESIDUES.list[reverseMap[r]] - r is the exact delta to the
-/// next admissible k, in one lookup instead of an unbounded-looking scan.
-///
-/// The resuming wheelStepIndex is reverseMap[k % 30], not
-/// reverseMap[(prime*k) % 30]: WHEEL_PATTERNS' 8-entry rows are indexed by
-/// the k-th admissible k-value (not by the composite's own residue) - this
-/// holds for any k because admissible k's repeat mod 30 with period 8 (the
-/// (k+8)-th admissible k is exactly the k-th plus 30, so prime*k's residue
-/// mod 30 repeats every 8 admissible k's too). The prime^2 case (k = prime)
-/// is just this same formula with minRawNumberInclusive = 0.
+/// resumes at. ADMISSIBLE_RESIDUES.reverseMap[r] is the index of the
+/// smallest admissible residue >= r, so this is a single table lookup
+/// instead of a scan. The resuming wheelStepIndex is reverseMap[k % 30],
+/// not reverseMap[(prime*k) % 30]: WHEEL_PATTERNS' 8-entry rows are
+/// indexed by the k-th admissible k-value, which repeats mod 30 with
+/// period 8 regardless of prime.
 pub fn firstAdmissibleMultiple(prime: usize, minRawNumberInclusive: usize) AdmissibleMultiple {
     const k0 = @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
     const r = k0 % Comptimes.WHEEL_CIRCUMFERENCE;
@@ -102,13 +57,10 @@ pub const AdmissibleMultiple210 = struct {
     wheelStepIndex210: u6,
 };
 
-/// Wheel-210 analog of firstAdmissibleMultiple, huge tier only - same
-/// derivation, just resuming within the 48-long wheel-210 cycle
-/// (Comptimes.WHEEL_PATTERNS_210) instead of the 8-long wheel-30 one.
-/// bucketIndex still lands in wheel-30 bucket units (WHEEL_CIRCUMFERENCE,
-/// not WHEEL_CIRCUMFERENCE_210) - the underlying sieve array is always
-/// wheel-30; only the sequence of admissible landings a huge-tier prime's
-/// own stepping visits changes.
+/// Wheel-210 analog of firstAdmissibleMultiple (huge tier only): resumes
+/// within the 48-long wheel-210 cycle instead of the 8-long wheel-30 one.
+/// bucketIndex still lands in wheel-30 units - the sieve array itself is
+/// always wheel-30, only the stepping sequence changes.
 pub fn firstAdmissibleMultiple210(prime: usize, minRawNumberInclusive: usize) AdmissibleMultiple210 {
     const k0 = @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
     const r = k0 % Comptimes.WHEEL_CIRCUMFERENCE_210;
@@ -122,13 +74,9 @@ pub fn firstAdmissibleMultiple210(prime: usize, minRawNumberInclusive: usize) Ad
     };
 }
 
-/// Huge-tier-only sieving-prime record: a separate type from SievePrime
-/// (not a shared field widened for every tier) so small/medium/large's
-/// wheel-30 stepping - and their u3 wheelStepIndex's free natural
-/// wraparound at 8 - are untouched by this. Same packed bit budget as
-/// SievePrime (105 bits vs. 102, both round up to the same 128-bit/16-byte
-/// backing integer), so this costs nothing extra in the ring/block storage
-/// hugeSievePrimes.zig already has.
+/// Huge-tier-only sieving-prime record: a separate type from SievePrime so
+/// small/medium/large's u3 wheelStepIndex and its free wraparound at 8
+/// stay untouched by wheel-210's wider 48-phase index.
 pub const HugeSievePrime = packed struct {
     currentBucketIndex: usize,
     initialBucketIndex: u32,
@@ -145,29 +93,16 @@ pub const HugeSievePrime = packed struct {
     }
 };
 
-/// Ring/Block-resident encoding of a huge-tier sieving prime - see
-/// hugeSievePrimes.zig's own top comment for the full derivation, and its
-/// SEGMENT_ELEMS comptime assertion for the invariant this relies on.
-/// Stores only the LOCAL offset within whichever future segment this
-/// entry is filed to, never a full 64-bit absolute position - mirroring
-/// primesieve's own SievingPrime (bench/primesieve/include/primesieve/
-/// Bucket.hpp): which segment an entry belongs to is already implicit in
-/// which ring slot/Block holds it, so a stored absolute position (as
-/// HugeSievePrime itself still uses) is pure waste for anything already
-/// placed in the ring.
-///
-/// `localOffset: u23` safely covers any buildable SEGMENT_ELEMS
-/// (build.zig's floorPow2Clamped caps opt_segment_size_in_kb at 8192 KiB,
-/// i.e. SEGMENT_ELEMS <= 2^23) - the exact same 23-bit budget primesieve's
-/// own MAX_MULTIPLEINDEX uses, not a coincidence: both bound "offset
-/// within one sieve segment" for a sieve sized the same way (a power-of-
-/// two byte count derived from cache size). 23+32+3+6 = 64 bits exactly -
-/// one native word, HALF of HugeSievePrime's own 128-bit/16-byte packed
-/// size. HugeSievePrime itself is kept (unchanged) for the discovery-time
-/// API surface and HugeSievePrimes.list (the pending overflow band, whose
-/// entries have no segment assignment yet and so still need the full
-/// absolute position) - this type is only ever constructed once a segment
-/// assignment (and thus a ring slot) is already known.
+/// Ring/Block-resident encoding of a huge-tier sieving prime (see
+/// hugeSievePrimes.zig). Stores only the LOCAL offset within whichever
+/// future segment this entry is filed to, not a full absolute position -
+/// which segment it belongs to is already implicit in which ring
+/// slot/Block holds it. `localOffset: u23` covers any buildable
+/// SEGMENT_ELEMS (build.zig caps it at 2^23 - see hugeSievePrimes.zig's
+/// comptime assertion). 23+32+3+6 = 64 bits exactly, half of
+/// HugeSievePrime's own packed size - this type is only ever built once a
+/// ring slot is already known (HugeSievePrimes.list, not yet placed,
+/// still uses the wider HugeSievePrime).
 pub const HugeSievePrimeSlot = packed struct {
     localOffset: u23,
     initialBucketIndex: u32,

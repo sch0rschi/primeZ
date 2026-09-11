@@ -13,12 +13,9 @@ const LARGE_HEAD_PRIME_COUNTS_BY_RESIDUE = "large_head_prime_counts_by_residue";
 const PRESIEVE_PATTERNS_BLOB = "presieve_patterns_blob";
 const PRESIEVE_GROUPS = "presieve_groups";
 
-/// Where `zig build regen-presieve-groups` writes a solved GROUPS config
-/// (see wireRegenPresieveGroups/resolvePresieveGroups) - a build-output
-/// path (zig-out/, already gitignored), deliberately not a tracked source
-/// file: a solved config should never get committed just because someone
-/// ran the regen step locally. Absent, the build falls back to
-/// PresieveGroups.GROUPS (primesieve's own grouping - see that file).
+/// Where `zig build regen-presieve-groups` writes a solved GROUPS config -
+/// a gitignored build-output path, never a tracked source file. Absent,
+/// the build falls back to PresieveGroups.GROUPS.
 const SOLVED_PRESIEVE_GROUPS_PATH = "zig-out/presieve-groups.txt";
 
 const DETECTION_FALLBACK = 32;
@@ -158,28 +155,10 @@ pub fn build(b: *std.Build) void {
 }
 
 /// `zig build regen-presieve-groups`: re-solves presieveOpt/solve.py's
-/// costmodel MILP and writes the result to SOLVED_PRESIEVE_GROUPS_PATH (a
-/// build-output path under zig-out/, already gitignored - never a tracked
-/// source file, see that constant). The *next* `zig build` picks it up
-/// automatically via resolvePresieveGroups; this step itself doesn't need
-/// to (re-)build anything else. Deliberately NOT part of the default
-/// `zig build`/`test`/install graph: solving is a real MILP solve (a 60s
-/// time-limit cap by default, more for a tighter --gap-limit) and needs a
-/// Python venv with highspy/ortools present, neither of which a normal
-/// build (or CI) should have to pay for or depend on. solve.py caches its
-/// own solves (fingerprinted on every solver-relevant parameter AND its own
-/// source hash - see solve_cost_model_cached there), so running this step
-/// repeatedly with an unchanged build config and an unchanged solve.py is
-/// cheap; -Dforce-resolve-presieve-groups=true forces a fresh solve
-/// regardless (passes --clear-cache through).
-///
-/// Every costmodel parameter (--hit-cost-multiplier, --vec-len, --cache-*,
-/// --small-*) is left at solve.py's own defaults - none gets a build-derived
-/// override here. --cache-target-kib in particular models a pattern
-/// buffer's own L1-residency knee (a hardware fact solve.py's own default
-/// already reflects), which is unrelated to this build's segment length -
-/// passing the segment length through would silently override that
-/// coefficient with an unrelated value.
+/// costmodel MILP and writes the result to SOLVED_PRESIEVE_GROUPS_PATH;
+/// the next `zig build` picks it up automatically. Not part of the
+/// default build/test/install graph: solving needs a Python venv with
+/// highspy/ortools, which a normal build shouldn't have to depend on.
 fn wireRegenPresieveGroups(b: *std.Build) void {
     const force_resolve = b.option(
         bool,
@@ -296,17 +275,9 @@ fn computePrimeCountsByResidue(
     return counts;
 }
 
-/// Resolves which GROUPS this build uses: a solved config written by `zig
-/// build regen-presieve-groups` (see wireRegenPresieveGroups) at
-/// SOLVED_PRESIEVE_GROUPS_PATH if present, else PresieveGroups.GROUPS -
-/// this project's hardcoded default, which mirrors primesieve's own
-/// pre-sieve grouping (see that file's docstring) rather than any of this
-/// project's own past tuning, so a from-scratch checkout with no solved
-/// config still gets a reasonable, independently-motivated starting point.
-/// SOLVED_PRESIEVE_GROUPS_PATH's format (see solve.py's
-/// write_presieve_groups): one group per line, primes comma-separated -
-/// deliberately not Zig source and not JSON, just enough structure for
-/// this trivial parse.
+/// Resolves which GROUPS this build uses: a solved config at
+/// SOLVED_PRESIEVE_GROUPS_PATH if present, else PresieveGroups.GROUPS.
+/// File format: one group per line, primes comma-separated.
 fn resolvePresieveGroups(b: *std.Build) []const []const usize {
     const path = b.pathFromRoot(SOLVED_PRESIEVE_GROUPS_PATH);
     const text = std.Io.Dir.cwd().readFileAlloc(b.graph.io, path, b.allocator, .limited(1024 * 1024)) catch |err| switch (err) {
@@ -339,19 +310,12 @@ fn resolvePresieveGroups(b: *std.Build) []const []const usize {
     return groups.items;
 }
 
-/// Runs genPreSievePatternsTool.zig (native code, -OReleaseFast) to compute
-/// preSieve.zig's per-group AND-pattern buffers, instead of that file doing
-/// it itself inside a comptime-interpreted loop (see that tool's docstring
-/// for why - it used to be the dominant cost of a full `zig build`). Same
-/// `zig run`-and-capture-stdout pattern as computePrimeCountsByResidue,
-/// except the payload here is the raw pattern bytes themselves (one group's
-/// full pattern after another, in `groups` order) rather than parsed text -
-/// preSieve.zig slices this blob back apart using the same
-/// PRESIEVE_GROUPS/periodOf it already computes at comptime, so no
-/// length-prefixing is needed here. `groups` (resolvePresieveGroups's
-/// result - solved or default) is passed to the tool as one argv token per
-/// group (primes comma-separated) since it runs as a bare `zig run` with no
-/// module map, so it can't just import whichever GROUPS this build chose.
+/// Runs genPreSievePatternsTool.zig to compute preSieve.zig's per-group
+/// AND-pattern buffers as raw bytes; preSieve.zig slices this blob apart
+/// at comptime using the same PRESIEVE_GROUPS/periodOf it already
+/// computes. `groups` is passed as argv (one token per group, primes
+/// comma-separated) since the tool runs as a bare `zig run` with no
+/// module map.
 fn computePreSievePatternsBlob(b: *std.Build, groups: []const []const usize) []const u8 {
     const tool_path = b.pathFromRoot("buildUtils/genPreSievePatternsTool.zig");
 
@@ -366,10 +330,8 @@ fn computePreSievePatternsBlob(b: *std.Build, groups: []const []const usize) []c
         argv.append(b.allocator, spec.items) catch @panic("OOM");
     }
 
-    // Not b.runAllowFail: its stdout capture is hard-capped at 400 KiB
-    // (see std.Build.runAllowFail), far below the pattern blob's size (a
-    // few MiB - the sum of every GROUPS product, see
-    // presieveOpt/solve.py's --max-buffer-kib for the per-group ceiling).
+    // Not b.runAllowFail: its stdout capture is hard-capped at 400 KiB,
+    // far below the pattern blob's size (a few MiB).
     const io = b.graph.io;
     var child = std.process.spawn(io, .{
         .argv = argv.items,

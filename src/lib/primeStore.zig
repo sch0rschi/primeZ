@@ -15,8 +15,7 @@ pub const PrimeStore = struct {
     upperBoundQuery: Types.PRIME_TYPE,
     primes: ?[]Types.PRIME_TYPE = null,
 
-    /// Initializes a prime store that yiu can query (.isPrime(n), ... TODO).
-    /// It is guaranteed, that the number lowerLimitInclusive is included in the prime store for fast querying.
+    /// isPrime(n) is fast (table lookup) for n <= lowerLimitInclusive.
     pub fn initForQueries(allocator: std.mem.Allocator, lowerLimitInclusive: usize) !PrimeStore {
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(lowerLimitInclusive));
         const buckets = try allocator.alignedAlloc(Types.SIEVE_BUCKET_TYPE, ALIGNMENT, bucketsLength);
@@ -34,9 +33,8 @@ pub const PrimeStore = struct {
         };
     }
 
-    /// Initializes a prime store that yiu can query (.isPrime(n), ... TODO).
-    /// It is guaranteed, that the number lowerLimitInclusive is included in the prime store for fast querying.
-    /// In addition you get an array of sorted prime numbers via getPrimes(), where the last element is primesLimitInclusive.
+    /// Like initForQueries, plus getPrimes() returns sorted primes up to
+    /// primesLimitInclusive.
     pub fn initForQueriesAndPrimes(allocator: std.mem.Allocator, queryLowerLimitInclusive: usize, primesLimitInclusive: usize) !PrimeStore {
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(queryLowerLimitInclusive));
         const buckets = try allocator.alignedAlloc(Types.SIEVE_BUCKET_TYPE, ALIGNMENT, bucketsLength);

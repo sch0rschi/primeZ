@@ -32,9 +32,8 @@ PHASES: dict[str, list[tuple[str, str]]] = {
         ("huge.add", r"segmentIterator\.hugeSievePrimes\.HugeSievePrimes\.add"),
         ("huge.activate", r"segmentIterator\.hugeSievePrimes\.HugeSievePrimes\.activate"),
         # discovery (SegmentIterator.init + its nested discoverSievingPrimes,
-        # inlined into init's own symbol) now does all sieving-prime lookup
-        # AND filing - there's no separate discover-then-reseed pass anymore,
-        # see project memory huge_tier_bucket_list_idea.
+        # inlined into init's own symbol) does all sieving-prime lookup AND
+        # filing - no separate discover-then-reseed pass.
         ("discovery", r"segmentIterator\.SegmentIterator\.init\b"),
         ("iterator-next", r"segmentIterator\.SegmentIterator\.next\b"),
         ("sieveprime-append", r"array_list\.Aligned\(sieveEngine\.segmentIterator\.sievePrime\.SievePrime"),

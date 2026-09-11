@@ -10,17 +10,12 @@ const SievePrime = SievePrimeMod.SievePrime;
 const STRIPE_ELEMS: usize = BuildUtils.STRIPE_ELEMS;
 const SMALL_MEDIUM_THRESHOLD: usize = BuildUtils.SMALL_MEDIUM_THRESHOLD;
 
-// Only small sieving primes need this: their squares (and thus their first
-// multiple) routinely fall within the segment where they were discovered,
-// and unlike medium/large primes they aren't bucketed by wheel-step, so a
-// prime resuming mid-wheel across stripes can resume at any of the 8 steps.
-//
-// Every store address within an unrolled wheel cycle is computed as
-// `currentBucketIndex + <comptime-accumulated offset>`, independent of the
-// other stores in the same cycle, rather than chaining through a mutated
-// index each sub-step - same technique as mediumSievePrimes.zig's
-// applySievePrimeIntoSegmentMedium, generalized over all 8 possible
-// (runtime) resume points (see ROTATED_ACCUMULATED below).
+// Only small primes need this: their squares routinely fall within the
+// segment where they were discovered, and unlike medium/large primes they
+// aren't bucketed by wheel-step, so a prime can resume at any of the 8
+// steps. ROTATED_ACCUMULATED precomputes all 8 possible resume points so
+// each store address is `currentBucketIndex + <accumulated offset>`,
+// independent of the others in the same cycle.
 inline fn applySievePrimeIntoSegment(
     comptime inBucketIndex: u3,
     buckets: Types.SIEVE_BUCKETS_TYPE,
@@ -86,11 +81,9 @@ pub const SmallSievePrimes = struct {
     activeCounts: [Comptimes.ADMISSIBLE_RESIDUES.count]usize,
 
     pub fn init(allocator: std.mem.Allocator) !SmallSievePrimes {
-        // Every small-tier prime is <= SMALL_MEDIUM_THRESHOLD regardless of
-        // which of the 8 residues it falls in, so reserving the full
-        // (over-provisioned but safe) upper bound for each residue's own
-        // list lets add() use appendAssumeCapacity - same trick
-        // MediumSievePrimes' init() already relies on.
+        // Every small-tier prime is <= SMALL_MEDIUM_THRESHOLD, so reserving
+        // that upper bound for each residue's own list lets add() use
+        // appendAssumeCapacity.
         const capacity = Estimates.primeCountUpperBound(SMALL_MEDIUM_THRESHOLD);
         var map: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(SievePrime) = undefined;
         for (&map) |*list| {
@@ -127,14 +120,10 @@ pub const SmallSievePrimes = struct {
     /// activate()'s early-break scan assumes each of the 8 per-residue
     /// lists is sorted by currentBucketIndex. Discovery files primes in
     /// increasing prime-value order, which only coincides with increasing
-    /// currentBucketIndex order when every target is computed relative to
-    /// 0 (prime^2 is monotonic in prime); SegmentIterator's nested
-    /// discovery instead computes each target directly relative to the
-    /// real requested start (see SievePrime.from), and
-    /// firstAdmissibleMultiple's jitter for that isn't monotonic in prime
-    /// - a bigger prime can land earlier than a smaller one aimed at the
-    /// same start. Must be called once, after all discovery add() calls
-    /// and before the first activate(), to restore that invariant.
+    /// currentBucketIndex order when every target is relative to 0 -
+    /// targets relative to an arbitrary start aren't monotonic in prime.
+    /// Must be called once, after discovery and before the first
+    /// activate(), to restore that invariant.
     pub fn sortByPosition(self: *SmallSievePrimes) void {
         for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
             std.mem.sortUnstable(SievePrime, self.map[ari].items, {}, SievePrimeMod.lessThanByCurrentBucketIndex);

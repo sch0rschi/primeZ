@@ -39,13 +39,11 @@ pub const MediumSievePrimes = struct {
         }
     }
 
-    // A medium sieving prime's square is never within the segment where it
-    // was discovered (SMALL_MEDIUM_THRESHOLD is always well above
-    // sqrt(SEGMENT_ELEMS * 30) for any realistic cache-derived config), so
-    // unlike SmallSievePrimes.add(), there's nothing to cross off yet.
-    // appendAssumeCapacity is safe unconditionally: init() already reserves
+    // A medium prime's square is never within the segment where it was
+    // discovered, so unlike SmallSievePrimes.add() there's nothing to
+    // cross off yet. appendAssumeCapacity is safe: init() reserves
     // PRIME_COUNTS_BY_RESIDUE[ari] for every one of that ari's 8 wsi
-    // buckets, an upper bound on their combined population (see init()).
+    // buckets, an upper bound on their combined population.
     pub fn add(
         self: *MediumSievePrimes,
         sievePrime: SievePrime,
