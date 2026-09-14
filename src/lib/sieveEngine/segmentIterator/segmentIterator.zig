@@ -291,8 +291,17 @@ noinline fn discoverSievingPrimes(
                 } else {
                     const target = SievePrimeMod.firstAdmissibleMultiple(prime, startInclusive);
                     if (prime > LARGE_HEAD_THRESHOLD) {
-                        const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
-                        largeHead.add(realSievePrime);
+                        // Same argument as large/huge's own discard filter:
+                        // largeHead's own step is bounded (<=2 hits per
+                        // segment by construction), so if its FIRST target
+                        // already lands at or past the query's end, every
+                        // later hit (strictly further away) would too -
+                        // never worth a slot in maps that every later
+                        // segment's apply() would otherwise keep rescanning.
+                        if (target.bucketIndex < queryBucketsLength) {
+                            const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
+                            largeHead.add(realSievePrime);
+                        }
                     } else if (prime > MEDIUM_LARGE_THRESHOLD) {
                         if (target.bucketIndex < queryBucketsLength) {
                             const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
