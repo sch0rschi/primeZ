@@ -162,7 +162,7 @@ fn crossOffSegment(
     bucketsStart: usize,
     bucketsEndExclusive: usize,
 ) !void {
-    small.activate(bucketsEndExclusive);
+    small.activate(bucketsStart, bucketsEndExclusive);
     small.apply(buckets, bucketsStart, bucketsEndExclusive);
 
     medium.apply(buckets, bucketsStart, bucketsEndExclusive);

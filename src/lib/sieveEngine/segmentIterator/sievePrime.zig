@@ -127,3 +127,25 @@ pub const LargeHeadCompactSievePrime = packed struct {
     initialInBucketIndex: u3,
     wheelStepIndex: u3,
 };
+
+/// Compact steady-state encoding for SmallSievePrimes' own `active` array
+/// (see smallSievePrimes.zig) - no segmentsAhead counter needed at all,
+/// unlike LargeHeadCompactSievePrime: a small-tier prime's own threshold
+/// guarantees its step is always tiny relative to a stripe, so once
+/// active it fires on literally every subsequent stripe/segment call,
+/// forever - `localOffset` gets freshly rewritten on every touch as a
+/// side effect of that, with a single conditional `-= SEGMENT_ELEMS`
+/// folded into the same write whenever a step's exit crosses a segment
+/// boundary (see applyCompactSievePrimeIntoSegment's docstring - this is
+/// NOT the same recurring "rebase every non-firing touch" cost that
+/// already failed for medium/large, since small-tier entries essentially
+/// never have a non-firing touch once active). Also drops
+/// `initialInBucketIndex` entirely (unlike every other compact type
+/// here) - always redundant for this tier specifically, since an entry's
+/// residue is already implicit in which of the 8 per-residue arrays
+/// holds it. 23+32+3 = 58 bits, 8 bytes packed.
+pub const SmallCompactSievePrime = packed struct {
+    localOffset: u23,
+    initialBucketIndex: u32,
+    wheelStepIndex: u3,
+};
