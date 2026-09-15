@@ -109,3 +109,21 @@ pub const HugeSievePrimeSlot = packed struct {
     initialInBucketIndex: u3,
     wheelStepIndex210: u6,
 };
+
+/// Compact steady-state encoding for LargeHeadSievePrimes' own
+/// maps/mapsSwap (see largeHeadSievePrimes.zig) - NOT a ring: a
+/// largeHead entry is bounded to a small, fixed number of segments ahead
+/// (see MAX_SKIP there, derived from this tier's own wheel-30 max step
+/// and its "at most 2 hits" guarantee), so `localOffset` (position
+/// within whichever segment it's eventually due) stays FIXED while
+/// `segmentsAhead` alone decrements each non-firing segment - no rebase
+/// needed, unlike a plain "subtract SEGMENT_ELEMS every touched segment"
+/// local-offset scheme (see the huge_tier_ringentry_shrink project
+/// memory for why that one already failed for this tier family).
+pub const LargeHeadCompactSievePrime = packed struct {
+    localOffset: u23,
+    segmentsAhead: u3,
+    initialBucketIndex: u32,
+    initialInBucketIndex: u3,
+    wheelStepIndex: u3,
+};

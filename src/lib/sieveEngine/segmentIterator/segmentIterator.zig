@@ -170,8 +170,7 @@ fn crossOffSegment(
     try large.activate(allocator, bucketsStart);
     large.apply(buckets, bucketsStart, bucketsEndExclusive);
 
-    // No activate(): bucket-and-refile design, a not-yet-due entry just
-    // sits until apply()'s own readiness check lets it through.
+    largeHead.activate(bucketsStart);
     largeHead.apply(buckets, bucketsStart, bucketsEndExclusive);
 
     try huge.activate(allocator, bucketsStart);
@@ -300,7 +299,7 @@ noinline fn discoverSievingPrimes(
                         // segment's apply() would otherwise keep rescanning.
                         if (target.bucketIndex < queryBucketsLength) {
                             const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
-                            largeHead.add(realSievePrime);
+                            try largeHead.add(allocator, realSievePrime, outputBucketsStart);
                         }
                     } else if (prime > MEDIUM_LARGE_THRESHOLD) {
                         if (target.bucketIndex < queryBucketsLength) {
@@ -329,7 +328,7 @@ noinline fn discoverSievingPrimes(
                     } else {
                         const selfSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, 0);
                         if (prime > LARGE_HEAD_THRESHOLD) {
-                            selfLargeHead.add(selfSievePrime);
+                            try selfLargeHead.add(allocator, selfSievePrime, selfBucketsStart);
                         } else if (prime > MEDIUM_LARGE_THRESHOLD) {
                             try selfLarge.add(allocator, selfSievePrime, selfBucketsStart);
                         } else if (prime > SMALL_MEDIUM_THRESHOLD) {
