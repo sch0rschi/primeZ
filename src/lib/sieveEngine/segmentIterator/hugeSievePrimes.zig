@@ -337,9 +337,11 @@ inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: *RingEntry) usize
     const segmentsAhead = newOffset / SEGMENT_ELEMS;
 
     entry.localOffset = @intCast(newOffset - segmentsAhead * SEGMENT_ELEMS);
-    // u6 over a 48-long cycle isn't a power of two, so this needs an
-    // explicit wrap (unlike the wheel-30 tiers' u3 +% 1).
-    entry.wheelStepIndex210 = if (wheelStepIndex210 == Comptimes.ADMISSIBLE_RESIDUES_210.count - 1) 0 else wheelStepIndex210 + 1;
+    // u6 over a 48-long cycle isn't a power of two, so a runtime wrap
+    // (unlike the wheel-30 tiers' free u3 +% 1) would need a branch -
+    // baked into the table as data instead (primesieve's own wheel210
+    // table does the same), so this is a plain load, no branch at all.
+    entry.wheelStepIndex210 = @intCast(step.nextWheelStepIndex210);
 
     return segmentsAhead;
 }

@@ -20,7 +20,15 @@ pub const WheelStep = struct {
     bitMask: u8,
     divMultiplicator: u8,
     residueAddend: u8,
-    _padding: u8 = 0,
+    // Only meaningful for WHEEL_PATTERNS_210 entries (huge tier's own
+    // wraparound is NOT a power of two, unlike wheel-30's u3 +% 1, so it
+    // needs this baked in as data instead of a runtime branch - see
+    // buildWheelPatterns210 and the huge_tier_ringentry_shrink project
+    // memory's "why huge is slower" finding). Inert padding (always 0,
+    // never read) for WHEEL_PATTERNS' own wheel-30 entries - this field
+    // already existed purely as size-rounding padding before, so reusing
+    // it here costs nothing.
+    nextWheelStepIndex210: u8 = 0,
 };
 
 pub const WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep = buildWheelPatterns();
@@ -151,7 +159,7 @@ fn buildWheelPatterns210() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES_210.c
         var number = ar;
         var k: usize = 1;
         @setEvalBranchQuota(1_000_000);
-        for (wp) |*step| {
+        for (wp, 0..) |*step, stepIndex| {
             const startNumber = number;
             number += ar;
             k += 1;
@@ -165,6 +173,7 @@ fn buildWheelPatterns210() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES_210.c
                 .bitMask = ~@as(Types.SIEVE_BUCKET_TYPE, 1 << ADMISSIBLE_RESIDUES.reverseMap[startNumber % WHEEL_CIRCUMFERENCE]),
                 .divMultiplicator = @intCast(steps),
                 .residueAddend = @intCast((number / WHEEL_CIRCUMFERENCE) - (startNumber / WHEEL_CIRCUMFERENCE)),
+                .nextWheelStepIndex210 = @intCast((stepIndex + 1) % ADMISSIBLE_RESIDUES_210.count),
             };
         }
     }
