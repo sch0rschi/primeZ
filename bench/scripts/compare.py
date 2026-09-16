@@ -1,142 +1,139 @@
 #!/usr/bin/env python3
-"""Prints the primeZ vs. primesieve vs. primal side-by-side phase table from
-cached report files (see summarize.py).
+"""Runs primeZ and primesieve over a fixed set of range scenarios and prints
+a side-by-side wall-time comparison table.
 
-usage: compare.py <pz-report> <pz-total> <ps-report> <ps-total> [<primal-total>] [<primal-report>]
+The four scenarios (small, big, high, extreme) are the standard
+primeZ-vs-primesieve benchmark for this project, each calibrated to run in
+roughly 5-10s: two from-zero ranges, and two much higher offsets ("high",
+"extreme" - named for offset depth, not window width, since the two are
+close in width by construction) at roughly the same window width - see the
+project's "huge_tier_high_offset_regression" note for why offset (not
+window width) is the interesting variable at high start values.
+
+Both binaries print their own "Seconds: <f>" / "Primes: <n>" lines (avoids
+measurement overhead like a wrapping profiler would add); this script trusts
+those, taking the best-of-<repeats> time per scenario and cross-checking
+that both implementations agree on the prime count.
+
+usage: compare.py <primez-bin> <primesieve-bin> [--repeats N] [--only name,name,...] \
+    <name> <start> <limit> [<name> <start> <limit> ...]
 
 Stdlib only, no third-party dependencies.
 """
 
 from __future__ import annotations
 
+import re
+import subprocess
 import sys
-from pathlib import Path
 
-from bench_lib import PHASES, load_report, pct_to_seconds, phase_pct
-
-LW, PW, SW, RW, PRW = 15, 8, 9, 12, 13
-GROUP_W = PW + 1 + SW
-PS_GROUP_W = GROUP_W + 3 + RW
-PRIMAL_GROUP_W = GROUP_W + 3 + PRW
+SECONDS_RE = re.compile(r"Seconds:\s*([0-9.]+)")
+PRIMES_RE = re.compile(r"Primes:\s*([0-9]+)")
 
 
-def fmt_pct(p: float) -> str:
-    return f"{p:.1f}%"
+def run(argv: list[str]) -> tuple[float, int]:
+    # primeZ reports via std.debug.print (stderr); primesieve's --time/-c
+    # report to stdout - combine both so either convention parses.
+    result = subprocess.run(argv, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"error: {' '.join(argv)} exited with status {result.returncode}\n{result.stderr}", file=sys.stderr)
+        raise SystemExit(1)
+
+    output = result.stdout + result.stderr
+    seconds_m = SECONDS_RE.search(output)
+    primes_m = PRIMES_RE.search(output)
+    if not seconds_m or not primes_m:
+        print(f"error: couldn't parse output of {' '.join(argv)}:\n{output}", file=sys.stderr)
+        raise SystemExit(1)
+    return float(seconds_m.group(1)), int(primes_m.group(1))
 
 
-def fmt_sec(s: float) -> str:
-    return f"{s:.2f}s"
+def best_of(argv: list[str], repeats: int) -> tuple[float, int]:
+    best_seconds: float | None = None
+    primes: int | None = None
+    for _ in range(repeats):
+        seconds, p = run(argv)
+        if primes is None:
+            primes = p
+        elif primes != p:
+            print(f"error: prime count differs across repeats of {' '.join(argv)}: {primes} vs {p}", file=sys.stderr)
+            raise SystemExit(1)
+        if best_seconds is None or seconds < best_seconds:
+            best_seconds = seconds
+    assert best_seconds is not None and primes is not None
+    return best_seconds, primes
 
 
-def ratio(a: float, b: float | None) -> str:
-    if not b:
-        return "-"
-    return f"{a / b:.2f}x"
-
-
-def row(label: str, pz_pct: float, ps_pct: float, pz_total: float, ps_total: float,
-        primal_pct: float | None = None, primal_seconds: float | None = None) -> str:
-    pzs = pct_to_seconds(pz_pct, pz_total)
-    pss = pct_to_seconds(ps_pct, ps_total)
-    r = ratio(pzs, pss)
-    if primal_pct is not None and primal_seconds is not None:
-        primal_col = f"{fmt_pct(primal_pct):>{PW}} {fmt_sec(primal_seconds):>{SW}}"
-        primal_r = ratio(pzs, primal_seconds)
-    else:
-        primal_col = f"{'-':>{PW}} {'-':>{SW}}"
-        primal_r = "-"
-    return (
-        f"{label:<{LW}} | {fmt_pct(pz_pct):>{PW}} {fmt_sec(pzs):>{SW}} | "
-        f"{fmt_pct(ps_pct):>{PW}} {fmt_sec(pss):>{SW}}   {r:>{RW}} | "
-        f"{primal_col}   {primal_r:>{PRW}}"
-    )
+def fmt_ratio(pz_seconds: float, ps_seconds: float) -> str:
+    if pz_seconds <= ps_seconds:
+        return f"primeZ {ps_seconds / pz_seconds:.2f}x faster"
+    return f"primesieve {pz_seconds / ps_seconds:.2f}x faster"
 
 
 def main() -> int:
     args = sys.argv[1:]
-    if len(args) < 4:
+    if len(args) < 2:
         print(
-            "usage: compare.py <pz-report> <pz-total> <ps-report> <ps-total> [<primal-total>] [<primal-report>]",
+            "usage: compare.py <primez-bin> <primesieve-bin> [--repeats N] [--only name,name,...] "
+            "<name> <start> <limit> ...",
             file=sys.stderr,
         )
         return 1
 
-    pz_report, pz_total = Path(args[0]), float(args[1])
-    ps_report, ps_total = Path(args[2]), float(args[3])
-    primal_total = float(args[4]) if len(args) > 4 and args[4].strip() else None
-    primal_report = Path(args[5]) if len(args) > 5 and args[5].strip() else None
+    primez_bin, primesieve_bin = args[0], args[1]
+    rest = args[2:]
 
-    for f in (pz_report, ps_report):
-        if not f.is_file():
-            print(f"error: report cache not found: {f} (run summarize.py first)", file=sys.stderr)
+    repeats = 1
+    if rest[:1] == ["--repeats"]:
+        repeats = int(rest[1])
+        rest = rest[2:]
+
+    only: set[str] | None = None
+    if rest[:1] == ["--only"]:
+        only = {name.strip() for name in rest[1].split(",") if name.strip()}
+        rest = rest[2:]
+
+    if not rest or len(rest) % 3 != 0:
+        print("error: scenarios must come in <name> <start> <limit> triples", file=sys.stderr)
+        return 1
+
+    scenarios = [(rest[i], int(rest[i + 1]), int(rest[i + 2])) for i in range(0, len(rest), 3)]
+    if only is not None:
+        unknown = only - {name for name, _, _ in scenarios}
+        if unknown:
+            print(f"error: --only names not in the scenario list: {sorted(unknown)}", file=sys.stderr)
             return 1
+        scenarios = [s for s in scenarios if s[0] in only]
 
-    pz_rows = load_report(pz_report)
-    ps_rows = load_report(ps_report)
+    rows: list[tuple[str, int, int, float, float]] = []
+    for name, start, limit in scenarios:
+        print(f"== {name}: [{start}, {limit}] ==", file=sys.stderr)
+        pz_seconds, pz_primes = best_of([primez_bin, str(start), str(limit)], repeats)
+        ps_seconds, ps_primes = best_of(
+            [primesieve_bin, str(start), str(limit), "-t1", "--time", "--no-status"], repeats
+        )
+        if pz_primes != ps_primes:
+            print(
+                f"error: prime count MISMATCH for scenario {name!r} [{start}, {limit}]: "
+                f"primeZ={pz_primes} primesieve={ps_primes}",
+                file=sys.stderr,
+            )
+            return 1
+        rows.append((name, start, limit, pz_seconds, ps_seconds))
 
-    pz_phases = dict(PHASES["primez"])
-    ps_phases = dict(PHASES["primesieve"])
+    name_w = max([len(n) for n, *_ in rows] + [len("scenario")])
+    range_w = max([len(f"[{s}, {l}]") for _, s, l, _, _ in rows] + [len("range")])
 
-    # presieve and small are reported *combined* here (not as separate
-    # rows the way summarize.py's single-tool breakdown does) because the
-    # presieve/small boundary isn't the same prime in both tools anymore:
-    # primesieve's PreSieve buffers stop at 97 (its own fixed 8-buffer
-    # table), while primeZ's presieveOpt-solved GROUPS currently reach
-    # much further (into the 100s-200s, see presieveOpt/solve.py). A
-    # per-phase comparison at that boundary would silently misattribute
-    # work primeZ moved from "small" into "presieve" as if primeZ's
-    # small-prime handling had gotten cheaper, when it's really just
-    # accounted for on the other side of a line that moved. presieve+small
-    # together - "cost of handling every sieving prime below the
-    # medium threshold, how ever it's split internally" - is the
-    # invariant, comparable quantity.
-    pz_presieve_small = phase_pct(pz_rows, pz_phases["presieve"]) + phase_pct(pz_rows, pz_phases["small"])
-    pz_medium = phase_pct(pz_rows, pz_phases["medium"])
-    pz_large = phase_pct(pz_rows, pz_phases["large"])
-    pz_collecting = phase_pct(pz_rows, pz_phases["collecting"])
-    pz_other = max(0.0, 100.0 - (pz_presieve_small + pz_medium + pz_large + pz_collecting))
-
-    ps_presieve_small = phase_pct(ps_rows, ps_phases["presieve"]) + phase_pct(ps_rows, ps_phases["small"])
-    ps_medium = phase_pct(ps_rows, ps_phases["medium"])
-    ps_large = phase_pct(ps_rows, ps_phases["large"])
-    ps_collecting = phase_pct(ps_rows, ps_phases["collecting"])
-    ps_other = max(0.0, 100.0 - (ps_presieve_small + ps_medium + ps_large + ps_collecting))
-
-    primal_collecting_pct = None
-    primal_collecting_seconds = None
-    if primal_report is not None and primal_total is not None and primal_report.is_file():
-        primal_rows = load_report(primal_report)
-        primal_phases = dict(PHASES["primal"])
-        primal_collecting_pct = phase_pct(primal_rows, primal_phases["collecting"])
-        primal_collecting_seconds = pct_to_seconds(primal_collecting_pct, primal_total)
-
-    def dashes(n: int) -> str:
-        return "-" * n
-
-    print(f"{'':<{LW}} | {'primeZ':<{GROUP_W}} | {'primesieve':<{PS_GROUP_W}} | {'primal':<{PRIMAL_GROUP_W}}")
-    print(
-        f"{'phase':<{LW}} | {'self%':>{PW}} {'seconds':>{SW}} | "
-        f"{'self%':>{PW}} {'seconds':>{SW}}   {'primeZ/ps':>{RW}} | "
-        f"{'self%':>{PW}} {'seconds':>{SW}}   {'primeZ/primal':>{PRW}}"
-    )
-    print(
-        f"{dashes(LW):<{LW}} | {dashes(PW):>{PW}} {dashes(SW):>{SW}} | "
-        f"{dashes(PW):>{PW}} {dashes(SW):>{SW}}   {dashes(RW):>{RW}} | "
-        f"{dashes(PW):>{PW}} {dashes(SW):>{SW}}   {dashes(PRW):>{PRW}}"
-    )
-    print(row("presieve+small", pz_presieve_small, ps_presieve_small, pz_total, ps_total))
-    print(row("medium", pz_medium, ps_medium, pz_total, ps_total))
-    print(row("large", pz_large, ps_large, pz_total, ps_total))
-    print(row("collecting", pz_collecting, ps_collecting, pz_total, ps_total,
-               primal_collecting_pct, primal_collecting_seconds))
-    print(row("other", pz_other, ps_other, pz_total, ps_total))
-    print(
-        f"{dashes(LW):<{LW}} | {dashes(PW):>{PW}} {dashes(SW):>{SW}} | "
-        f"{dashes(PW):>{PW}} {dashes(SW):>{SW}}   {dashes(RW):>{RW}} | "
-        f"{dashes(PW):>{PW}} {dashes(SW):>{SW}}   {dashes(PRW):>{PRW}}"
-    )
-    print(row("total", 100.0, 100.0, pz_total, ps_total,
-               100.0 if primal_total is not None else None, primal_total))
+    header = f"{'scenario':<{name_w}} | {'range':<{range_w}} | {'primeZ':>10} | {'primesieve':>10} | result"
+    print()
+    print(header)
+    print("-" * len(header))
+    for name, start, limit, pz_seconds, ps_seconds in rows:
+        rng = f"[{start}, {limit}]"
+        print(
+            f"{name:<{name_w}} | {rng:<{range_w}} | {pz_seconds:>9.3f}s | {ps_seconds:>9.3f}s | "
+            f"{fmt_ratio(pz_seconds, ps_seconds)}"
+        )
 
     return 0
 

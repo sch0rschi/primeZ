@@ -1,34 +1,57 @@
-N ?= 1000000000000
-PERF_FREQ ?= 999
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
+REPEATS ?= 1
+ONLY ?=
+
+# Four scenarios, each calibrated to run in roughly 5-10s so the suite stays
+# fast to iterate on: two from-zero ranges (~5s and ~10s) plus two much
+# higher offsets at (roughly) the same window width - "high" and "extreme"
+# name how deep the offset is, not the window width, since the two are
+# close in width by construction (picked so both land at ~10s; see below).
+# That pair lets offset effects be compared directly at fixed width, since
+# project memory "huge_tier_high_offset_regression" found perf tracks with
+# offset, not width. Override any bound with e.g.
+# `make -C bench bench BIG_LIMIT=2000000000000`.
+SMALL_START ?= 0
+SMALL_LIMIT ?= 70000000000
+BIG_START ?= 0
+BIG_LIMIT ?= 130000000000
+HIGH_START ?= 1000000000000000
+HIGH_LIMIT ?= 1000040000000000
+EXTREME_START ?= 100000000000000000
+EXTREME_LIMIT ?= 100000028000000000
 
 HERE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ROOT := $(abspath $(HERE)/..)
 
-RESULTS := $(HERE)/results
 SCRIPTS := $(HERE)/scripts
 PRIMESIEVE_DIR := $(HERE)/primesieve
 PRIMESIEVE_BUILD := $(PRIMESIEVE_DIR)/build
 PRIMESIEVE_BIN := $(PRIMESIEVE_BUILD)/primesieve
-PRIMAL_BENCH_DIR := $(HERE)/primal-bench
-PRIMAL_BIN := $(PRIMAL_BENCH_DIR)/target/release/primal-bench
+PRIMEZ_BIN := $(ROOT)/zig-out/bin/primez
 
-.PHONY: help all bench compare primesieve-build primez-build primal-build perf-primez perf-primesieve perf-primal clean distclean
+SCENARIO_ARGS := \
+	small $(SMALL_START) $(SMALL_LIMIT) \
+	big $(BIG_START) $(BIG_LIMIT) \
+	high $(HIGH_START) $(HIGH_LIMIT) \
+	extreme $(EXTREME_START) $(EXTREME_LIMIT)
+
+ONLY_ARGS := $(if $(ONLY),--only $(ONLY),)
+
+.PHONY: help all bench primesieve-build primez-build clean distclean
 .NOTPARALLEL:
 
 help:
-	@echo "primeZ vs. primesieve vs. primal benchmarks"
+	@echo "primeZ vs. primesieve benchmark: small limit, big limit, high offset, extreme offset"
 	@echo ""
-	@echo "  make bench             build + record + report all implementations"
-	@echo "                          (perf on Linux, sample on macOS)"
-	@echo "  make perf-primez       just primeZ"
-	@echo "  make perf-primesieve   just primesieve"
-	@echo "  make perf-primal       just primal"
-	@echo "  make compare           re-print the side-by-side table from the last recordings"
-	@echo "  make clean             remove build outputs and results"
-	@echo "  make distclean         also remove the primesieve build tree"
+	@echo "  make bench    build both and print the runtime comparison table"
+	@echo "  make clean    remove build outputs"
+	@echo "  make distclean also remove the primesieve build tree"
 	@echo ""
-	@echo "  vars: N=$(N) PERF_FREQ=$(PERF_FREQ)"
+	@echo "  vars: REPEATS=$(REPEATS) (best-of-N per scenario) ONLY=$(ONLY) (comma-separated scenario names)"
+	@echo "        SMALL_START=$(SMALL_START) SMALL_LIMIT=$(SMALL_LIMIT)"
+	@echo "        BIG_START=$(BIG_START) BIG_LIMIT=$(BIG_LIMIT)"
+	@echo "        HIGH_START=$(HIGH_START) HIGH_LIMIT=$(HIGH_LIMIT)"
+	@echo "        EXTREME_START=$(EXTREME_START) EXTREME_LIMIT=$(EXTREME_LIMIT)"
 
 all: bench
 
@@ -44,67 +67,11 @@ primez-build:
 	rm -rf $(ROOT)/zig-out $(ROOT)/.zig-cache
 	cd $(ROOT) && zig build
 
-perf-primez: primez-build
-	@mkdir -p $(RESULTS)
-	@echo "== recording primez CLI (up to $(N)) =="
-	@t=$$(python3 $(SCRIPTS)/record_and_time.py $(PERF_FREQ) $(RESULTS)/primez.perf.data -- $(ROOT)/zig-out/bin/primez $(N)); \
-	echo "$$t" > $(RESULTS)/primez.seconds; \
-	echo "wall time: $${t}s"; \
-	echo; \
-	echo "== primeZ phase breakdown (self-time) =="; \
-	python3 $(SCRIPTS)/summarize.py primez $(RESULTS)/primez.perf.data "$$t" $(RESULTS)/primez.report.txt \
-		| tee $(RESULTS)/primez.summary.txt
-
-perf-primesieve: primesieve-build
-	@mkdir -p $(RESULTS)
-	@if [ -f $(RESULTS)/primesieve.perf.data ] && [ -f $(RESULTS)/primesieve.seconds ] && \
-	   [ -f $(RESULTS)/primesieve.report.txt ] && [ -f $(RESULTS)/primesieve.summary.txt ]; then \
-		echo "== primesieve: reusing cached results from a previous run (make clean to force a fresh one) =="; \
-		cat $(RESULTS)/primesieve.summary.txt; \
-	else \
-		echo "== recording primesieve (single-threaded, auto-detected sieve size, up to $(N)) =="; \
-		t=$$(python3 $(SCRIPTS)/record_and_time.py $(PERF_FREQ) $(RESULTS)/primesieve.perf.data -- $(PRIMESIEVE_BIN) $(N) -t1 --time --no-status); \
-		echo "$$t" > $(RESULTS)/primesieve.seconds; \
-		echo "wall time: $${t}s"; \
-		echo; \
-		echo "== primesieve phase breakdown (self-time) =="; \
-		python3 $(SCRIPTS)/summarize.py primesieve $(RESULTS)/primesieve.perf.data "$$t" $(RESULTS)/primesieve.report.txt \
-			| tee $(RESULTS)/primesieve.summary.txt; \
-	fi
-
-primal-build:
-	cd $(PRIMAL_BENCH_DIR) && cargo build --release
-
-perf-primal: primal-build
-	@mkdir -p $(RESULTS)
-	@if [ -f $(RESULTS)/primal.perf.data ] && [ -f $(RESULTS)/primal.seconds ] && \
-	   [ -f $(RESULTS)/primal.report.txt ] && [ -f $(RESULTS)/primal.summary.txt ]; then \
-		echo "== primal: reusing cached results from a previous run (make clean to force a fresh one) =="; \
-		cat $(RESULTS)/primal.summary.txt; \
-	else \
-		echo "== recording primal (single-threaded, up to $(N)) =="; \
-		t=$$(python3 $(SCRIPTS)/record_and_time.py $(PERF_FREQ) $(RESULTS)/primal.perf.data -- $(PRIMAL_BIN) $(N)); \
-		echo "$$t" > $(RESULTS)/primal.seconds; \
-		echo "wall time: $${t}s"; \
-		echo; \
-		echo "== primal phase breakdown (self-time) =="; \
-		python3 $(SCRIPTS)/summarize.py primal $(RESULTS)/primal.perf.data "$$t" $(RESULTS)/primal.report.txt \
-			| tee $(RESULTS)/primal.summary.txt; \
-	fi
-
-bench: perf-primez perf-primesieve perf-primal compare
-
-compare:
-	@echo
-	@echo "== primeZ vs. primesieve vs. primal =="
-	@python3 $(SCRIPTS)/compare.py \
-		$(RESULTS)/primez.report.txt "$$(cat $(RESULTS)/primez.seconds)" \
-		$(RESULTS)/primesieve.report.txt "$$(cat $(RESULTS)/primesieve.seconds)" \
-		"$$(cat $(RESULTS)/primal.seconds 2>/dev/null)" \
-		"$(RESULTS)/primal.report.txt"
+bench: primez-build primesieve-build
+	@python3 $(SCRIPTS)/compare.py $(PRIMEZ_BIN) $(PRIMESIEVE_BIN) --repeats $(REPEATS) $(ONLY_ARGS) $(SCENARIO_ARGS)
 
 clean:
-	rm -rf $(ROOT)/zig-out $(ROOT)/.zig-cache $(RESULTS)
+	rm -rf $(ROOT)/zig-out $(ROOT)/.zig-cache
 
 distclean: clean
-	rm -rf $(PRIMESIEVE_BUILD) $(PRIMAL_BENCH_DIR)/target
+	rm -rf $(PRIMESIEVE_BUILD)

@@ -59,21 +59,21 @@ Values are specified in KiB.
 ### Comparing against primesieve
 
 `bench/` vendors [primesieve](https://github.com/kimwalisch/primesieve)
-as a git submodule and provides a `Makefile` that builds both, records
-each (`perf` on Linux, `sample` on macOS), and reports a side-by-side
-breakdown of time spent in the small/medium/large sieving-prime regimes
-both implementations use internally:
+as a git submodule and provides a `Makefile` that builds both and reports
+a side-by-side wall-time comparison over four fixed range scenarios, each
+calibrated to run in roughly 5-10s: two from-zero ranges ("small", "big")
+and two much higher offsets at roughly the same window width ("high",
+"extreme" - named for how deep the offset is, not window width):
 
 ``` sh
 git submodule update --init bench/primesieve
 make -C bench bench
 ```
 
-On macOS, `sample` ships with the Xcode Command Line Tools and needs
-Python 3 on `PATH` to parse its output; if it can't attach to the
-benchmark process, try re-running under `sudo`.
-
-See `bench/Makefile` for the available targets and variables.
+Each scenario is checked for a matching prime count between the two
+implementations before its timing is reported. See `bench/Makefile` for
+the scenario bounds and other variables (`REPEATS` for best-of-N timing,
+`ONLY` to run a subset of scenarios).
 
 ------------------------------------------------------------------------
 
