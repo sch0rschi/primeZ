@@ -40,9 +40,14 @@ pub const PrimeStore = struct {
         const buckets = try allocator.alignedAlloc(Types.SIEVE_BUCKET_TYPE, ALIGNMENT, bucketsLength);
         const containers: Types.SIEVE_CONTAINERS_TYPE = std.mem.bytesAsSlice(u64, std.mem.sliceAsBytes(buckets));
 
-        const amountUpperBound = Estimates.primeCountUpperBound(primesLimitInclusive);
+        // WHEEL_PRIMES is appended unconditionally below regardless of
+        // primesLimitInclusive (even when it's 0, as callers that only
+        // want the fast isPrime() lookup and never call getPrimes() do) -
+        // the bound must cover at least that, not just
+        // primeCountUpperBound's own estimate for primesLimitInclusive.
+        const amountUpperBound = @max(Estimates.primeCountUpperBound(primesLimitInclusive), Comptimes.WHEEL_PRIMES.len);
         var primes = try std.ArrayList(Types.PRIME_TYPE).initCapacity(allocator, amountUpperBound);
-        try primes.appendSlice(allocator, &Comptimes.WHEEL_PRIMES);
+        primes.appendSliceAssumeCapacity(&Comptimes.WHEEL_PRIMES);
 
         var segmentIterator = try SegmentIterator.init(allocator, 0, @max(queryLowerLimitInclusive, primesLimitInclusive));
         defer segmentIterator.deinit();

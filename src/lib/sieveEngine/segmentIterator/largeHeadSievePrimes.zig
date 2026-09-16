@@ -49,6 +49,18 @@ comptime {
     if (SEGMENT_ELEMS > 1 << 23) @compileError("SEGMENT_ELEMS exceeds CompactSievePrime.localOffset's u23 budget - widen that field before raising this bound");
 }
 
+// This tier's whole population, exactly (not just an upper bound) - both
+// LARGE_HEAD_PRIME_COUNTS_BY_RESIDUE's endpoints (LARGE_HEAD_THRESHOLD,
+// LARGE_HUGE_THRESHOLD) are build-time constants, so build.zig already
+// ran a real sieve over this tier's whole range. Bounds `pending`: in the
+// worst case every registered prime stays pending (mirrors huge/large's
+// own pending sizing).
+const TOTAL_POPULATION: usize = blk: {
+    var total: usize = 0;
+    for (BuildUtils.LARGE_HEAD_PRIME_COUNTS_BY_RESIDUE) |count| total += count;
+    break :blk total;
+};
+
 // Primes above LARGE_HEAD_THRESHOLD, up to LARGE_HUGE_THRESHOLD: at most 2
 // hits per segment worst case, 1 the overwhelming majority of the time.
 // (residue, wheel-phase)-bucketed like MediumSievePrimes, but doesn't
@@ -105,7 +117,7 @@ pub const LargeHeadSievePrimes = struct {
         return LargeHeadSievePrimes{
             .maps = maps,
             .mapsSwap = mapsSwap,
-            .pending = try std.ArrayList(SievePrime).initCapacity(allocator, 0),
+            .pending = try std.ArrayList(SievePrime).initCapacity(allocator, TOTAL_POPULATION),
             .pendingStart = 0,
         };
     }
@@ -140,12 +152,12 @@ pub const LargeHeadSievePrimes = struct {
         });
     }
 
-    pub fn add(self: *LargeHeadSievePrimes, allocator: std.mem.Allocator, sievePrime: SievePrime, bucketsStart: usize) !void {
+    pub fn add(self: *LargeHeadSievePrimes, sievePrime: SievePrime, bucketsStart: usize) void {
         const split = splitPosition(sievePrime.currentBucketIndex, bucketsStart);
         if (split.segmentsAhead <= MAX_SKIP) {
             self.fileCompact(sievePrime, split);
         } else {
-            try self.pending.append(allocator, sievePrime);
+            self.pending.appendAssumeCapacity(sievePrime);
         }
     }
 

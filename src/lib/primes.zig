@@ -61,7 +61,7 @@ pub fn getPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) ![]Types
     }
     const amountUpperBound = Estimates.primeCountUpperBound(limit);
     var primes = try std.ArrayList(Types.PRIME_TYPE).initCapacity(allocator, amountUpperBound);
-    try primes.appendSlice(allocator, &Comptimes.WHEEL_PRIMES);
+    primes.appendSliceAssumeCapacity(&Comptimes.WHEEL_PRIMES);
 
     var segmentIterator = try SegmentIterator.init(allocator, 0, limit);
     defer segmentIterator.deinit();

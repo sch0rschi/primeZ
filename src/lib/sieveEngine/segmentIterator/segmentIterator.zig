@@ -138,7 +138,7 @@ pub const SegmentIterator = struct {
             PreSieve.fill(self.buckets, self.bucketsStart);
         }
 
-        try crossOffSegment(self.allocator, &self.small, &self.medium, &self.large, &self.largeHead, &self.huge, self.buckets, self.bucketsStart, self.bucketsEndExclusive);
+        crossOffSegment(&self.small, &self.medium, &self.large, &self.largeHead, &self.huge, self.buckets, self.bucketsStart, self.bucketsEndExclusive);
 
         return Segment{
             .containerStart = self.bucketsStart / 8,
@@ -152,7 +152,6 @@ pub const SegmentIterator = struct {
 /// every sieving prime already registered - shared between next() and
 /// discoverSievingPrimes's own disposable tiers.
 fn crossOffSegment(
-    allocator: std.mem.Allocator,
     small: *SmallSievePrimes,
     medium: *MediumSievePrimes,
     large: *LargeSievePrimes,
@@ -161,13 +160,13 @@ fn crossOffSegment(
     buckets: Types.SIEVE_BUCKETS_TYPE,
     bucketsStart: usize,
     bucketsEndExclusive: usize,
-) !void {
+) void {
     small.activate(bucketsStart, bucketsEndExclusive);
     small.apply(buckets, bucketsStart, bucketsEndExclusive);
 
     medium.apply(buckets, bucketsStart, bucketsEndExclusive);
 
-    try large.activate(allocator, bucketsStart);
+    large.activate(bucketsStart);
     large.apply(buckets, bucketsStart, bucketsEndExclusive);
 
     largeHead.activate(bucketsStart);
@@ -252,7 +251,7 @@ noinline fn discoverSievingPrimes(
             PreSieve.fill(selfBuckets, selfBucketsStart);
         }
 
-        try crossOffSegment(allocator, &selfSmall, &selfMedium, &selfLarge, &selfLargeHead, &selfHuge, selfBuckets, selfBucketsStart, selfBucketsEndExclusive);
+        crossOffSegment(&selfSmall, &selfMedium, &selfLarge, &selfLargeHead, &selfHuge, selfBuckets, selfBucketsStart, selfBucketsEndExclusive);
 
         const containerStart = selfBucketsStart / 8;
         const containerEndExclusive = selfBucketsEndExclusive / 8;
@@ -299,12 +298,12 @@ noinline fn discoverSievingPrimes(
                         // segment's apply() would otherwise keep rescanning.
                         if (target.bucketIndex < queryBucketsLength) {
                             const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
-                            try largeHead.add(allocator, realSievePrime, outputBucketsStart);
+                            largeHead.add(realSievePrime, outputBucketsStart);
                         }
                     } else if (prime > MEDIUM_LARGE_THRESHOLD) {
                         if (target.bucketIndex < queryBucketsLength) {
                             const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
-                            try large.add(allocator, realSievePrime, outputBucketsStart);
+                            large.add(realSievePrime, outputBucketsStart);
                         }
                     } else if (prime > SMALL_MEDIUM_THRESHOLD) {
                         medium.add(SievePrime.fromTarget(target, bucketIndex, inBucketIndex));
@@ -328,9 +327,9 @@ noinline fn discoverSievingPrimes(
                     } else {
                         const selfSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, 0);
                         if (prime > LARGE_HEAD_THRESHOLD) {
-                            try selfLargeHead.add(allocator, selfSievePrime, selfBucketsStart);
+                            selfLargeHead.add(selfSievePrime, selfBucketsStart);
                         } else if (prime > MEDIUM_LARGE_THRESHOLD) {
-                            try selfLarge.add(allocator, selfSievePrime, selfBucketsStart);
+                            selfLarge.add(selfSievePrime, selfBucketsStart);
                         } else if (prime > SMALL_MEDIUM_THRESHOLD) {
                             selfMedium.add(selfSievePrime);
                         } else {
