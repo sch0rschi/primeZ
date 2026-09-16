@@ -40,7 +40,13 @@ pub const AdmissibleMultiple = struct {
 /// indexed by the k-th admissible k-value, which repeats mod 30 with
 /// period 8 regardless of prime.
 pub fn firstAdmissibleMultiple(prime: usize, minRawNumberInclusive: usize) AdmissibleMultiple {
-    const k0 = @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
+    // divCeil(0, prime) is always 0 (prime >= 1), making @max(prime, ...)
+    // always just `prime` - a real, wasted division on every call with
+    // minRawNumberInclusive == 0 (every self-registration, plus every
+    // real registration in a from-zero query). Skip it explicitly rather
+    // than let the CPU compute and discard a division prime doesn't
+    // divide evenly into.
+    const k0 = if (minRawNumberInclusive == 0) prime else @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
     const r = k0 % Comptimes.WHEEL_CIRCUMFERENCE;
     const wheelStepIndex = Comptimes.ADMISSIBLE_RESIDUES.reverseMap[r];
     const k = k0 + (Comptimes.ADMISSIBLE_RESIDUES.list[wheelStepIndex] - r);
@@ -62,7 +68,8 @@ pub const AdmissibleMultiple210 = struct {
 /// bucketIndex still lands in wheel-30 units - the sieve array itself is
 /// always wheel-30, only the stepping sequence changes.
 pub fn firstAdmissibleMultiple210(prime: usize, minRawNumberInclusive: usize) AdmissibleMultiple210 {
-    const k0 = @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
+    // See firstAdmissibleMultiple's identical fast path above.
+    const k0 = if (minRawNumberInclusive == 0) prime else @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
     const r = k0 % Comptimes.WHEEL_CIRCUMFERENCE_210;
     const wheelStepIndex210 = Comptimes.ADMISSIBLE_RESIDUES_210.reverseMap[r];
     const k = k0 + (Comptimes.ADMISSIBLE_RESIDUES_210.list[wheelStepIndex210] - r);
