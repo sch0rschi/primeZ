@@ -135,9 +135,10 @@ pub const MediumSievePrimes = struct {
             if (currentBucketIndex + abia < bucketCount) {
                 buckets[currentBucketIndex + abia] &= ws.bitMask;
             } else {
+                const newWheelStepIndex = wheelStepIndex +% @as(u3, wsi);
                 sievePrime.currentBucketIndex = currentBucketIndex + abia + bucketsStart;
-                sievePrime.wheelStepIndex = wheelStepIndex +% @as(u3, wsi);
-                mediumSievePrimesMap[(@as(usize, wheelStepIndex) + wsi) % WHEEL_STEP_COUNT].appendAssumeCapacity(sievePrime.*);
+                sievePrime.wheelStepIndex = newWheelStepIndex;
+                mediumSievePrimesMap[newWheelStepIndex].appendAssumeCapacity(sievePrime.*);
                 return;
             }
         } else {
