@@ -241,10 +241,10 @@ pub const PreHugeSievePrimes = struct {
                 const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(RingEntry);
 
                 for (items[0..fill]) |*entry| {
-                    const segmentsAhead = processOne(buckets, entry);
-                    std.debug.assert(segmentsAhead < ringLen);
-                    const slot = (cursor + segmentsAhead) & (ringLen - 1);
-                    self.storeSievingPrime(slot, entry);
+                    const result = processOne(buckets, entry.*);
+                    std.debug.assert(result.segmentsAhead < ringLen);
+                    const slot = (cursor + result.segmentsAhead) & (ringLen - 1);
+                    self.storeSievingPrime(slot, &result.entry);
                 }
 
                 const next = b.next;
@@ -258,13 +258,19 @@ pub const PreHugeSievePrimes = struct {
 };
 
 /// Crosses off one entry's current occurrence and advances it to the
-/// next, returning how many segments ahead that lands - 0 means still
+/// next, returning the ADVANCED entry by value (not written back through
+/// `entry`) plus how many segments ahead it now lands - 0 means still
 /// due THIS segment (see apply()'s outer redrain loop for how that's
 /// handled). Deliberately a single cross-off, no internal loop for a
 /// possible second hit - unlike this tier's old HEAD/TAIL design, a
 /// second hit is just another call to this same function, driven by
-/// apply()'s outer loop.
-inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: *RingEntry) usize {
+/// apply()'s outer loop. Takes `entry` BY VALUE, not `*RingEntry` - see
+/// hugeSievePrimes.zig's own processOne for why (perf-confirmed: writing
+/// the new fields back through the pointer, then having the caller
+/// re-read `entry.*` to pass to storeSievingPrime, forced a genuine
+/// store-then-reload the compiler couldn't optimize away, since the
+/// intervening addBlock() call also touches the same Block pool).
+inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: RingEntry) struct { entry: RingEntry, segmentsAhead: usize } {
     const initialInBucketIndex = entry.initialInBucketIndex;
     const wheelStepIndex = entry.wheelStepIndex;
     const step = Comptimes.WHEEL_PATTERNS[initialInBucketIndex][wheelStepIndex];
@@ -277,11 +283,16 @@ inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: *RingEntry) usize
     const newOffset = localOffset + advance;
     const segmentsAhead = newOffset / SEGMENT_ELEMS;
 
-    entry.localOffset = @intCast(newOffset - segmentsAhead * SEGMENT_ELEMS);
-    // u3 over an 8-long cycle IS a power of two, so a wrapping add is
-    // enough (unlike huge's wheel-210 tier, whose u6 over a 48-long
-    // cycle needs an explicit wrap).
-    entry.wheelStepIndex = wheelStepIndex +% 1;
-
-    return segmentsAhead;
+    return .{
+        .entry = RingEntry{
+            .localOffset = @intCast(newOffset - segmentsAhead * SEGMENT_ELEMS),
+            .initialBucketIndex = entry.initialBucketIndex,
+            .initialInBucketIndex = initialInBucketIndex,
+            // u3 over an 8-long cycle IS a power of two, so a wrapping
+            // add is enough (unlike huge's wheel-210 tier, whose u6 over
+            // a 48-long cycle needs an explicit wrap).
+            .wheelStepIndex = wheelStepIndex +% 1,
+        },
+        .segmentsAhead = segmentsAhead,
+    };
 }

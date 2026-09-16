@@ -302,12 +302,12 @@ pub const HugeSievePrimes = struct {
                 const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(RingEntry);
 
                 for (items[0..fill]) |*entry| {
-                    const segmentsAhead = processOne(buckets, entry);
+                    const result = processOne(buckets, entry.*);
                     // Never `cursor` itself: a huge prime advances at
                     // least one segment ahead, always < ringLen.
-                    std.debug.assert(segmentsAhead >= 1 and segmentsAhead < ringLen);
-                    const slot = (cursor + segmentsAhead) & (ringLen - 1);
-                    self.storeSievingPrime(slot, entry);
+                    std.debug.assert(result.segmentsAhead >= 1 and result.segmentsAhead < ringLen);
+                    const slot = (cursor + result.segmentsAhead) & (ringLen - 1);
+                    self.storeSievingPrime(slot, &result.entry);
                 }
 
                 const next = b.next;
@@ -322,8 +322,19 @@ pub const HugeSievePrimes = struct {
 };
 
 /// Crosses off one entry's current occurrence and advances it to the
-/// next, returning how many segments ahead that lands.
-inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: *RingEntry) usize {
+/// next, returning the ADVANCED entry by value (not written back through
+/// `entry`) plus how many segments ahead it now lands. Takes `entry` BY
+/// VALUE, not `*RingEntry` - an earlier version wrote the new
+/// localOffset/wheelStepIndex210 back into the caller's entry pointer
+/// (the OLD block, about to be freed) and had the caller re-read
+/// `entry.*` afterward to copy it into `storeSievingPrime` - `perf
+/// annotate` showed the compiler couldn't prove that memory wasn't
+/// touched by the intervening addBlock() call (which also touches the
+/// same Block pool), so it emitted a genuine store-then-reload instead
+/// of keeping the freshly-computed value in a register. Returning the
+/// new entry by value sidesteps the whole question - there's no shared
+/// memory location for the optimizer to reason about at all.
+inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: RingEntry) struct { entry: RingEntry, segmentsAhead: usize } {
     const initialInBucketIndex = entry.initialInBucketIndex;
     const wheelStepIndex210 = entry.wheelStepIndex210;
     const step = Comptimes.WHEEL_PATTERNS_210[initialInBucketIndex][wheelStepIndex210];
@@ -336,12 +347,18 @@ inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: *RingEntry) usize
     const newOffset = localOffset + advance;
     const segmentsAhead = newOffset / SEGMENT_ELEMS;
 
-    entry.localOffset = @intCast(newOffset - segmentsAhead * SEGMENT_ELEMS);
-    // u6 over a 48-long cycle isn't a power of two, so a runtime wrap
-    // (unlike the wheel-30 tiers' free u3 +% 1) would need a branch -
-    // baked into the table as data instead (primesieve's own wheel210
-    // table does the same), so this is a plain load, no branch at all.
-    entry.wheelStepIndex210 = @intCast(step.nextWheelStepIndex210);
-
-    return segmentsAhead;
+    return .{
+        .entry = RingEntry{
+            .localOffset = @intCast(newOffset - segmentsAhead * SEGMENT_ELEMS),
+            .initialBucketIndex = entry.initialBucketIndex,
+            .initialInBucketIndex = initialInBucketIndex,
+            // u6 over a 48-long cycle isn't a power of two, so a runtime
+            // wrap (unlike the wheel-30 tiers' free u3 +% 1) would need a
+            // branch - baked into the table as data instead (primesieve's
+            // own wheel210 table does the same), so this is a plain load,
+            // no branch at all.
+            .wheelStepIndex210 = @intCast(step.nextWheelStepIndex210),
+        },
+        .segmentsAhead = segmentsAhead,
+    };
 }
