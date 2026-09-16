@@ -2,6 +2,7 @@ const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
 const BuildUtils = @import("buildUtils");
+const Estimates = @import("../../estimates.zig");
 
 const SievePrimeMod = @import("sievePrime.zig");
 // Discovery-facing type (holds a full absolute bucket position). RingEntry
@@ -10,6 +11,7 @@ const SievePrime = SievePrimeMod.HugeSievePrime;
 const RingEntry = SievePrimeMod.HugeSievePrimeSlot;
 
 const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
+const LARGE_HUGE_THRESHOLD: usize = BuildUtils.LARGE_HUGE_THRESHOLD;
 
 // RingEntry.localOffset is a u23; SEGMENT_ELEMS must never exceed 2^23.
 comptime {
@@ -82,8 +84,40 @@ fn blockOf(ptr: [*]RingEntry) *Block {
     return @ptrFromInt(address);
 }
 
-const INITIAL_POOL_COUNT: usize = 64;
-const MAX_POOL_COUNT: usize = 1 << 16;
+// Upper bound on how many huge-tier sieving primes a query can ever
+// register: primes in (LARGE_HUGE_THRESHOLD, maxPrime], bounded above by
+// primeCountUpperBound's difference (saturating - maxPrime can be below
+// LARGE_HUGE_THRESHOLD, e.g. the self-bootstrap sieve's own small dsp, in
+// which case the huge tier is simply never used).
+fn populationBoundFor(maxPrime: usize) usize {
+    const bound = Estimates.primeCountUpperBound(maxPrime) -| Estimates.primeCountUpperBound(LARGE_HUGE_THRESHOLD);
+    return @intCast(bound);
+}
+
+// Safe upper bound on how many Blocks can ever be simultaneously live
+// (allocated but not yet drained) at once, so the whole pool can be one
+// fixed-size preallocated array instead of a growing set of separately
+// allocated slabs - see the struct doc for why per-slot dedication (not
+// just preallocation) is what actually matters for locality.
+//
+// Each of up to `ringLen` slots can have its own dedicated, freshly
+// started (and therefore near-empty) Block open at once - that alone
+// costs up to `ringLen` Blocks holding almost nothing. Beyond that,
+// `population` entries worth of storage needs at most
+// ceil(population / BLOCK_LEN) further Blocks. Formally: for occupancies
+// o_1..o_k (k <= ringLen, sum o_i <= population), each slot's Block count
+// is ceil(o_i / BLOCK_LEN) <= floor(o_i / BLOCK_LEN) + 1, so the total is
+// <= population / BLOCK_LEN + ringLen. The extra +1 covers apply()'s own
+// transient: it re-files a drained slot's entries into their new slots
+// one Block at a time, only calling freeBlock() on the old Block once
+// every one of its entries has already been re-stored elsewhere - so for
+// the span of one Block's re-filing, both its own (not-yet-freed) Block
+// and its entries' brand new destination Block(s) are briefly live at
+// once. Single-threaded, so at most one such not-yet-freed Block ever
+// exists at a time.
+fn maxBlocksFor(population: usize, ringLen: usize) usize {
+    return ringLen + (population + BLOCK_LEN - 1) / BLOCK_LEN + 1;
+}
 
 // Above LARGE_HUGE_THRESHOLD a single wheel step already exceeds a full
 // segment, so a huge sieving prime crosses off at most once per segment.
@@ -93,7 +127,11 @@ const MAX_POOL_COUNT: usize = 1 << 16;
 // tracked prime's single wheel step, so once filed into the ring, apply()
 // only ever touches an entry on the exact segment it's due. Each ring
 // slot is a singly-linked list of Block; `ringWritePos[i]` (the live
-// write cursor) is enough to recover everything else on demand.
+// write cursor) is enough to recover everything else on demand. Each
+// Block, once started, belongs to exactly one slot until fully drained -
+// that per-slot dedication is what keeps a slot's entries contiguous in
+// memory, so apply()'s scan over a drained slot stays a sequential read
+// instead of chasing pointers scattered across the whole pool.
 //
 // Ring/Block storage uses RingEntry (a local offset within its eventual
 // segment - see HugeSievePrimeSlot's own docstring), not SievePrime
@@ -109,7 +147,9 @@ const MAX_POOL_COUNT: usize = 1 << 16;
 // `list`/`pendingStart` bridges that thin band (kept sorted by
 // currentBucketIndex - discovery order already gives that for free);
 // activate() drains its front into the ring once a prime's position
-// comes within reach.
+// comes within reach. Sized to the same populationBoundFor(maxPrime)
+// bound as the Block pool: in the worst case every registered prime
+// stays pending.
 pub const HugeSievePrimes = struct {
     list: std.ArrayList(SievePrime),
     pendingStart: usize,
@@ -120,52 +160,43 @@ pub const HugeSievePrimes = struct {
     ringWritePos: []?[*]RingEntry,
     ringHead: usize,
 
-    // Blocks returned here once a ring slot is fully drained by apply(),
-    // reused by future addBlock() calls instead of freeing/reallocating.
+    // Head of the free list threading through blockPool (below) - a
+    // Block returned here once its ring slot is fully drained by apply(),
+    // reused by future addBlock() calls. Starts empty: blocks are handed
+    // out from `blockPool` lazily (see nextUnclaimed) rather than
+    // pre-chained, so a query that never needs the whole pool never
+    // touches (page-faults in) the part it doesn't use.
     freeBlocks: ?*Block,
 
-    // Backs freeBlocks: allocated in bulk (BLOCK_BYTES-aligned slabs,
-    // geometric growth) rather than one Block at a time - individual
-    // small allocations scatter blocks across memory and were measured
-    // as a severe regression.
-    poolChunks: std.ArrayList([]align(BLOCK_BYTES) Block),
-    nextPoolCount: usize,
+    // The entire Block pool, sized once via maxBlocksFor() and never
+    // grown - see maxBlocksFor's doc for why this bound is safe.
+    blockPool: []align(BLOCK_BYTES) Block,
+    nextUnclaimed: usize,
 
     pub fn init(allocator: std.mem.Allocator, maxPrime: usize) !HugeSievePrimes {
         const ringLen = ringSizeFor(maxPrime);
         const ringWritePos = try allocator.alloc(?[*]RingEntry, ringLen);
         @memset(ringWritePos, null);
 
+        const population = populationBoundFor(maxPrime);
+        const blockCount = maxBlocksFor(population, ringLen);
+        const blockPool = try allocator.alignedAlloc(Block, BLOCK_ALIGNMENT, blockCount);
+
         return HugeSievePrimes{
-            .list = try std.ArrayList(SievePrime).initCapacity(allocator, 0),
+            .list = try std.ArrayList(SievePrime).initCapacity(allocator, population),
             .pendingStart = 0,
             .ringWritePos = ringWritePos,
             .ringHead = 0,
             .freeBlocks = null,
-            .poolChunks = try std.ArrayList([]align(BLOCK_BYTES) Block).initCapacity(allocator, 0),
-            .nextPoolCount = INITIAL_POOL_COUNT,
+            .blockPool = blockPool,
+            .nextUnclaimed = 0,
         };
     }
 
     pub fn deinit(self: *HugeSievePrimes, allocator: std.mem.Allocator) void {
         self.list.deinit(allocator);
         allocator.free(self.ringWritePos);
-        for (self.poolChunks.items) |slab| allocator.free(slab);
-        self.poolChunks.deinit(allocator);
-    }
-
-    fn allocateBlockPool(self: *HugeSievePrimes, allocator: std.mem.Allocator) !void {
-        const count = self.nextPoolCount;
-        const slab = try allocator.alignedAlloc(Block, BLOCK_ALIGNMENT, count);
-        try self.poolChunks.append(allocator, slab);
-
-        for (slab[0 .. count - 1], 0..) |*b, i| {
-            b.next = &slab[i + 1];
-        }
-        slab[count - 1].next = null;
-        self.freeBlocks = &slab[0];
-
-        self.nextPoolCount = @min(count + count / 8, MAX_POOL_COUNT);
+        allocator.free(self.blockPool);
     }
 
     fn freeBlock(self: *HugeSievePrimes, b: *Block) void {
@@ -173,10 +204,18 @@ pub const HugeSievePrimes = struct {
         self.freeBlocks = b;
     }
 
-    fn addBlock(self: *HugeSievePrimes, allocator: std.mem.Allocator, sealedWritePos: ?[*]RingEntry) ![*]RingEntry {
-        if (self.freeBlocks == null) try self.allocateBlockPool(allocator);
-        const fresh = self.freeBlocks.?;
-        self.freeBlocks = fresh.next;
+    fn addBlock(self: *HugeSievePrimes, sealedWritePos: ?[*]RingEntry) [*]RingEntry {
+        // maxBlocksFor(maxPrime) bounds total simultaneously-live Blocks,
+        // so one of these two sources always has room.
+        const fresh = if (self.freeBlocks) |fb| blk: {
+            self.freeBlocks = fb.next;
+            break :blk fb;
+        } else blk: {
+            std.debug.assert(self.nextUnclaimed < self.blockPool.len);
+            const b = &self.blockPool[self.nextUnclaimed];
+            self.nextUnclaimed += 1;
+            break :blk b;
+        };
         fresh.next = null;
 
         if (sealedWritePos) |wp| {
@@ -187,11 +226,11 @@ pub const HugeSievePrimes = struct {
         return fresh.items();
     }
 
-    fn storeSievingPrime(self: *HugeSievePrimes, allocator: std.mem.Allocator, slot: usize, entry: *const RingEntry) !void {
-        const wp = self.ringWritePos[slot] orelse try self.addBlock(allocator, null);
+    fn storeSievingPrime(self: *HugeSievePrimes, slot: usize, entry: *const RingEntry) void {
+        const wp = self.ringWritePos[slot] orelse self.addBlock(null);
         wp[0] = entry.*;
         const next = wp + 1;
-        self.ringWritePos[slot] = if (isFull(next)) try self.addBlock(allocator, next) else next;
+        self.ringWritePos[slot] = if (isFull(next)) self.addBlock(next) else next;
     }
 
     fn toRingEntry(sievePrime: SievePrime, bucketsStart: usize, segmentsAhead: usize) RingEntry {
@@ -209,15 +248,15 @@ pub const HugeSievePrimes = struct {
     /// discoverSievingPrimes's self-bootstrapping sieve calls add()
     /// interleaved with its own activate()/apply(), which advance
     /// ringHead, so this can't assume ringHead is still 0.
-    pub fn add(self: *HugeSievePrimes, allocator: std.mem.Allocator, sievePrime: SievePrime, bucketsStart: usize) !void {
+    pub fn add(self: *HugeSievePrimes, sievePrime: SievePrime, bucketsStart: usize) void {
         const ringLen = self.ringWritePos.len;
         const segmentsAhead = destinationOf(sievePrime, ringLen, bucketsStart);
         if (segmentsAhead < ringLen) {
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
             const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
-            try self.storeSievingPrime(allocator, slot, &entry);
+            self.storeSievingPrime(slot, &entry);
         } else {
-            try self.list.append(allocator, sievePrime);
+            self.list.appendAssumeCapacity(sievePrime);
         }
     }
 
@@ -227,7 +266,7 @@ pub const HugeSievePrimes = struct {
         return if (segmentsAhead < ringLen) segmentsAhead else ringLen;
     }
 
-    pub noinline fn activate(self: *HugeSievePrimes, allocator: std.mem.Allocator, bucketsStart: usize) !void {
+    pub noinline fn activate(self: *HugeSievePrimes, bucketsStart: usize) void {
         const ringLen = self.ringWritePos.len;
         while (self.pendingStart < self.list.items.len) {
             const sievePrime = self.list.items[self.pendingStart];
@@ -237,18 +276,17 @@ pub const HugeSievePrimes = struct {
 
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
             const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
-            try self.storeSievingPrime(allocator, slot, &entry);
+            self.storeSievingPrime(slot, &entry);
             self.pendingStart += 1;
         }
     }
 
     pub noinline fn apply(
         self: *HugeSievePrimes,
-        allocator: std.mem.Allocator,
         buckets: Types.SIEVE_BUCKETS_TYPE,
         bucketsStart: usize,
         bucketsEndExclusive: usize,
-    ) !void {
+    ) void {
         _ = bucketsEndExclusive;
         _ = bucketsStart; // RingEntry.localOffset is already segment-relative.
         const ringLen = self.ringWritePos.len;
@@ -269,7 +307,7 @@ pub const HugeSievePrimes = struct {
                     // least one segment ahead, always < ringLen.
                     std.debug.assert(segmentsAhead >= 1 and segmentsAhead < ringLen);
                     const slot = (cursor + segmentsAhead) & (ringLen - 1);
-                    try self.storeSievingPrime(allocator, slot, entry);
+                    self.storeSievingPrime(slot, entry);
                 }
 
                 const next = b.next;

@@ -173,8 +173,8 @@ fn crossOffSegment(
     largeHead.activate(bucketsStart);
     largeHead.apply(buckets, bucketsStart, bucketsEndExclusive);
 
-    try huge.activate(allocator, bucketsStart);
-    try huge.apply(allocator, buckets, bucketsStart, bucketsEndExclusive);
+    huge.activate(bucketsStart);
+    huge.apply(buckets, bucketsStart, bucketsEndExclusive);
 }
 
 /// Finds every sieving prime up to and including rootPrime and files each
@@ -285,7 +285,7 @@ noinline fn discoverSievingPrimes(
                     const target210 = SievePrimeMod.firstAdmissibleMultiple210(prime, startInclusive);
                     if (target210.bucketIndex < queryBucketsLength) {
                         const realHugeSievePrime = HugeSievePrime.fromTarget210(target210, bucketIndex, inBucketIndex);
-                        try huge.add(allocator, realHugeSievePrime, outputBucketsStart);
+                        huge.add(realHugeSievePrime, outputBucketsStart);
                     }
                 } else {
                     const target = SievePrimeMod.firstAdmissibleMultiple(prime, startInclusive);
@@ -324,7 +324,7 @@ noinline fn discoverSievingPrimes(
                     if (prime > LARGE_HUGE_THRESHOLD) {
                         const selfTarget210 = SievePrimeMod.firstAdmissibleMultiple210(prime, 0);
                         const selfHugeSievePrime = HugeSievePrime.fromTarget210(selfTarget210, bucketIndex, inBucketIndex);
-                        try selfHuge.add(allocator, selfHugeSievePrime, selfBucketsStart);
+                        selfHuge.add(selfHugeSievePrime, selfBucketsStart);
                     } else {
                         const selfSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, 0);
                         if (prime > LARGE_HEAD_THRESHOLD) {
