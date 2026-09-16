@@ -66,8 +66,32 @@ inline fn applyCompactSievePrimeIntoSegment(
         break :blk rotations;
     };
 
+    // The 8 bulk-loop bitmasks, one per resume point, packed 8-to-a-u64
+    // (one byte each) instead of read individually from
+    // ROTATED_ACCUMULATED[resumeAt][0..8].bitMask every bulk-loop
+    // iteration. `perf annotate` showed the compiler spilling 4 of the 8
+    // per-iteration bitmask bytes to the stack (real register pressure -
+    // `accumulatedBucketIndexAdvance`'s 9 usize values plus 8 more
+    // one-byte masks exceeds the available GPRs) and reloading them from
+    // stack every iteration; holding all 8 in ONE register and slicing a
+    // byte out via a comptime-constant shift measured as a real, small,
+    // consistent win (~0.5-1%) via interleaved benchmarking - see the
+    // huge_tier_ringentry_shrink project memory's "surgical audit" entry.
+    const ROTATED_BITMASKS_PACKED: [Comptimes.ADMISSIBLE_RESIDUES.count]u64 = comptime blk: {
+        var packedMasks: [Comptimes.ADMISSIBLE_RESIDUES.count]u64 = undefined;
+        for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |resumeAt| {
+            var p: u64 = 0;
+            for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |stepIndex| {
+                p |= @as(u64, ROTATED_ACCUMULATED[resumeAt][stepIndex].bitMask) << @intCast(stepIndex * 8);
+            }
+            packedMasks[resumeAt] = p;
+        }
+        break :blk packedMasks;
+    };
+
     const wheelStepIndex = entry.wheelStepIndex;
     const accumulatedWheelPattern = &ROTATED_ACCUMULATED[wheelStepIndex];
+    const bitMasksPacked: u64 = ROTATED_BITMASKS_PACKED[wheelStepIndex];
 
     var accumulatedBucketIndexAdvance: [Comptimes.ADMISSIBLE_RESIDUES.count + 1]usize = undefined;
     inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count + 1) |stepIndex| {
@@ -77,7 +101,8 @@ inline fn applyCompactSievePrimeIntoSegment(
 
     while (currentBucketIndex + accumulatedBucketIndexAdvance[7] < bucketCount) {
         inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |si| {
-            buckets[currentBucketIndex + accumulatedBucketIndexAdvance[si]] &= accumulatedWheelPattern[si].bitMask;
+            const mask: Types.SIEVE_BUCKET_TYPE = @truncate(bitMasksPacked >> (si * 8));
+            buckets[currentBucketIndex + accumulatedBucketIndexAdvance[si]] &= mask;
         }
         currentBucketIndex += accumulatedBucketIndexAdvance[8];
     }
