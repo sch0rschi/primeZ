@@ -53,7 +53,19 @@ pub const ADMISSIBLE_RESIDUES_210: AdmissibleResidues210 = buildAdmissibleResidu
 
 // Indexed [prime's own residue class mod 30][phase in the 48-long
 // wheel-210 cycle] - same shape as WHEEL_PATTERNS, just a longer cycle.
-pub const WHEEL_PATTERNS_210: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES_210.count]WheelStep = buildWheelPatterns210();
+//
+// Row length is padded to WHEEL_210_ROW_LEN (64, the next power of 2
+// above the true 48 = ADMISSIBLE_RESIDUES_210.count) purely so each
+// row's byte stride is a power of 2: huge tier's own per-hit lookup
+// (WHEEL_PATTERNS_210[ari][wsi]) needs `ari * rowStride` to find the
+// right row, and 48 isn't a power of 2, forcing a real multiply
+// (confirmed via perf annotate: `lea (%r8,%r8,2),%r13; shl $0x6,%r13`,
+// i.e. ari*3*64=ari*192) where every other tier's wheel-30 tables (8
+// steps/row, stride already a power of 2) get a plain shift for free.
+// `wsi` itself still only ever cycles 0..47 - columns 48..63 are
+// genuinely unreachable padding (zeroed, never read at runtime).
+const WHEEL_210_ROW_LEN = 64;
+pub const WHEEL_PATTERNS_210: [ADMISSIBLE_RESIDUES.count][WHEEL_210_ROW_LEN]WheelStep = buildWheelPatterns210();
 
 fn buildAdmissibleResidues() AdmissibleResidues {
     var position: usize = 0;
@@ -152,14 +164,16 @@ fn buildAdmissibleResidues210() AdmissibleResidues210 {
 // mod 30 must be wheel-30-admissible, AND k itself must not be divisible
 // by 7. The latter holds regardless of ar because a real huge-tier prime
 // is always > 7, so 7 | (prime*k) iff 7 | k.
-fn buildWheelPatterns210() [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES_210.count]WheelStep {
-    var wheelPatterns: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES_210.count]WheelStep = undefined;
+fn buildWheelPatterns210() [ADMISSIBLE_RESIDUES.count][WHEEL_210_ROW_LEN]WheelStep {
+    const zeroStep = WheelStep{ .bitMask = 0, .divMultiplicator = 0, .residueAddend = 0, .nextWheelStepIndex210 = 0 };
+    var wheelPatterns: [ADMISSIBLE_RESIDUES.count][WHEEL_210_ROW_LEN]WheelStep =
+        [_][WHEEL_210_ROW_LEN]WheelStep{[_]WheelStep{zeroStep} ** WHEEL_210_ROW_LEN} ** ADMISSIBLE_RESIDUES.count;
 
     for (ADMISSIBLE_RESIDUES.list, &wheelPatterns) |ar, *wp| {
         var number = ar;
         var k: usize = 1;
         @setEvalBranchQuota(1_000_000);
-        for (wp, 0..) |*step, stepIndex| {
+        for (wp[0..ADMISSIBLE_RESIDUES_210.count], 0..) |*step, stepIndex| {
             const startNumber = number;
             number += ar;
             k += 1;
