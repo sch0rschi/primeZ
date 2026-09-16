@@ -65,7 +65,7 @@ fn maxBlocksFor(population: usize, ringLen: usize) usize {
 }
 
 // Primes above MEDIUM_LARGE_THRESHOLD, up to LARGE_HEAD_THRESHOLD (the
-// denser, multi-hit end of the large tier - see largeHeadSievePrimes.zig
+// denser, multi-hit end of the large tier - see preHugeSievePrimes.zig
 // for the sparser sub-range above that). Steps BATCH_SIZE primes together
 // one wheel-step at a time in lockstep so their independent loads/stores
 // can overlap, instead of serializing per prime - worthwhile only where

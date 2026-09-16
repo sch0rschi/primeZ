@@ -12,7 +12,7 @@ const HugeSievePrime = SievePrimeMod.HugeSievePrime;
 const SmallSievePrimes = @import("smallSievePrimes.zig").SmallSievePrimes;
 const MediumSievePrimes = @import("mediumSievePrimes.zig").MediumSievePrimes;
 const LargeSievePrimes = @import("largeSievePrimes.zig").LargeSievePrimes;
-const LargeHeadSievePrimes = @import("largeHeadSievePrimes.zig").LargeHeadSievePrimes;
+const PreHugeSievePrimes = @import("preHugeSievePrimes.zig").PreHugeSievePrimes;
 const HugeSievePrimes = @import("hugeSievePrimes.zig").HugeSievePrimes;
 
 const ALIGNMENT = std.mem.Alignment.@"8";
@@ -46,7 +46,7 @@ pub const SegmentIterator = struct {
     small: SmallSievePrimes,
     medium: MediumSievePrimes,
     large: LargeSievePrimes,
-    largeHead: LargeHeadSievePrimes,
+    preHuge: PreHugeSievePrimes,
     huge: HugeSievePrimes,
 
     pub noinline fn init(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize) !SegmentIterator {
@@ -86,7 +86,7 @@ pub const SegmentIterator = struct {
             .small = try SmallSievePrimes.init(allocator),
             .medium = try MediumSievePrimes.init(allocator),
             .large = try LargeSievePrimes.init(allocator),
-            .largeHead = try LargeHeadSievePrimes.init(allocator),
+            .preHuge = try PreHugeSievePrimes.init(allocator),
             .huge = try HugeSievePrimes.init(allocator, rootPrime),
         };
 
@@ -97,7 +97,7 @@ pub const SegmentIterator = struct {
             &self.small,
             &self.medium,
             &self.large,
-            &self.largeHead,
+            &self.preHuge,
             &self.huge,
             self.buckets,
             self.bucketsStart,
@@ -117,7 +117,7 @@ pub const SegmentIterator = struct {
         self.small.deinit(self.allocator);
         self.medium.deinit(self.allocator);
         self.large.deinit(self.allocator);
-        self.largeHead.deinit(self.allocator);
+        self.preHuge.deinit(self.allocator);
         self.huge.deinit(self.allocator);
         self.* = undefined;
     }
@@ -138,7 +138,7 @@ pub const SegmentIterator = struct {
             PreSieve.fill(self.buckets, self.bucketsStart);
         }
 
-        crossOffSegment(&self.small, &self.medium, &self.large, &self.largeHead, &self.huge, self.buckets, self.bucketsStart, self.bucketsEndExclusive);
+        crossOffSegment(&self.small, &self.medium, &self.large, &self.preHuge, &self.huge, self.buckets, self.bucketsStart, self.bucketsEndExclusive);
 
         return Segment{
             .containerStart = self.bucketsStart / 8,
@@ -155,7 +155,7 @@ fn crossOffSegment(
     small: *SmallSievePrimes,
     medium: *MediumSievePrimes,
     large: *LargeSievePrimes,
-    largeHead: *LargeHeadSievePrimes,
+    preHuge: *PreHugeSievePrimes,
     huge: *HugeSievePrimes,
     buckets: Types.SIEVE_BUCKETS_TYPE,
     bucketsStart: usize,
@@ -169,8 +169,8 @@ fn crossOffSegment(
     large.activate(bucketsStart);
     large.apply(buckets, bucketsStart, bucketsEndExclusive);
 
-    largeHead.activate(bucketsStart);
-    largeHead.apply(buckets, bucketsStart, bucketsEndExclusive);
+    preHuge.activate(bucketsStart);
+    preHuge.apply(buckets, bucketsStart, bucketsEndExclusive);
 
     huge.activate(bucketsStart);
     huge.apply(buckets, bucketsStart, bucketsEndExclusive);
@@ -197,7 +197,7 @@ noinline fn discoverSievingPrimes(
     small: *SmallSievePrimes,
     medium: *MediumSievePrimes,
     large: *LargeSievePrimes,
-    largeHead: *LargeHeadSievePrimes,
+    preHuge: *PreHugeSievePrimes,
     huge: *HugeSievePrimes,
     outputBuckets: Types.SIEVE_BUCKETS_TYPE,
     outputBucketsStart: usize,
@@ -227,8 +227,8 @@ noinline fn discoverSievingPrimes(
     defer selfMedium.deinit(allocator);
     var selfLarge = try LargeSievePrimes.init(allocator);
     defer selfLarge.deinit(allocator);
-    var selfLargeHead = try LargeHeadSievePrimes.init(allocator);
-    defer selfLargeHead.deinit(allocator);
+    var selfPreHuge = try PreHugeSievePrimes.init(allocator);
+    defer selfPreHuge.deinit(allocator);
     var selfHuge = try HugeSievePrimes.init(allocator, dsp);
     defer selfHuge.deinit(allocator);
 
@@ -251,7 +251,7 @@ noinline fn discoverSievingPrimes(
             PreSieve.fill(selfBuckets, selfBucketsStart);
         }
 
-        crossOffSegment(&selfSmall, &selfMedium, &selfLarge, &selfLargeHead, &selfHuge, selfBuckets, selfBucketsStart, selfBucketsEndExclusive);
+        crossOffSegment(&selfSmall, &selfMedium, &selfLarge, &selfPreHuge, &selfHuge, selfBuckets, selfBucketsStart, selfBucketsEndExclusive);
 
         const containerStart = selfBucketsStart / 8;
         const containerEndExclusive = selfBucketsEndExclusive / 8;
@@ -290,7 +290,7 @@ noinline fn discoverSievingPrimes(
                     const target = SievePrimeMod.firstAdmissibleMultiple(prime, startInclusive);
                     if (prime > LARGE_HEAD_THRESHOLD) {
                         // Same argument as large/huge's own discard filter:
-                        // largeHead's own step is bounded (<=2 hits per
+                        // preHuge's own step is bounded (<=2 hits per
                         // segment by construction), so if its FIRST target
                         // already lands at or past the query's end, every
                         // later hit (strictly further away) would too -
@@ -298,7 +298,7 @@ noinline fn discoverSievingPrimes(
                         // segment's apply() would otherwise keep rescanning.
                         if (target.bucketIndex < queryBucketsLength) {
                             const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
-                            largeHead.add(realSievePrime, outputBucketsStart);
+                            preHuge.add(realSievePrime, outputBucketsStart);
                         }
                     } else if (prime > MEDIUM_LARGE_THRESHOLD) {
                         if (target.bucketIndex < queryBucketsLength) {
@@ -327,7 +327,7 @@ noinline fn discoverSievingPrimes(
                     } else {
                         const selfSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, 0);
                         if (prime > LARGE_HEAD_THRESHOLD) {
-                            selfLargeHead.add(selfSievePrime, selfBucketsStart);
+                            selfPreHuge.add(selfSievePrime, selfBucketsStart);
                         } else if (prime > MEDIUM_LARGE_THRESHOLD) {
                             selfLarge.add(selfSievePrime, selfBucketsStart);
                         } else if (prime > SMALL_MEDIUM_THRESHOLD) {
