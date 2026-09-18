@@ -106,15 +106,21 @@ pub const HugeSievePrime = packed struct {
 /// which segment it belongs to is already implicit in which ring
 /// slot/Block holds it. `localOffset: u23` covers any buildable
 /// SEGMENT_ELEMS (build.zig caps it at 2^23 - see hugeSievePrimes.zig's
-/// comptime assertion). 23+32+3+6 = 64 bits exactly, half of
-/// HugeSievePrime's own packed size - this type is only ever built once a
-/// ring slot is already known (HugeSievePrimes.list, not yet placed,
-/// still uses the wider HugeSievePrime).
+/// comptime assertion). `wheelIndex210` is a FLAT (residue,phase) index
+/// (0..383) into Comptimes.WHEEL_PATTERNS_210, not two separate fields -
+/// mirrors primesieve's own EratBig SievingPrime, whose wheelIndex is
+/// likewise combined once and carried forward as data, never
+/// recombined on the hot per-hit path (see hugeSievePrimes.zig's
+/// toRingEntry, the one place this combine happens, and processOne,
+/// which no longer needs to). 23+32+9 = 64 bits exactly, half of
+/// HugeSievePrime's own packed size - this type is only ever built once
+/// a ring slot is already known (HugeSievePrimes.list, not yet placed,
+/// still uses the wider HugeSievePrime, which keeps residue/phase
+/// separate since it's off the hot path).
 pub const HugeSievePrimeSlot = packed struct {
     localOffset: u23,
     initialBucketIndex: u32,
-    initialInBucketIndex: u3,
-    wheelStepIndex210: u6,
+    wheelIndex210: u9,
 };
 
 /// Ring/Block-resident encoding of a preHuge-tier sieving prime (see

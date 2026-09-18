@@ -21,10 +21,8 @@ comptime {
 // Largest single-step advance (in buckets) any tracked prime can make.
 const MAX_WHEEL_STEP_FACTOR: usize = blk: {
     var m: usize = 0;
-    for (Comptimes.WHEEL_PATTERNS_210) |row| {
-        for (row) |step| {
-            m = @max(m, @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend));
-        }
+    for (Comptimes.WHEEL_PATTERNS_210) |step| {
+        m = @max(m, @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend));
     }
     break :blk m;
 };
@@ -233,13 +231,19 @@ pub const HugeSievePrimes = struct {
         self.ringWritePos[slot] = if (isFull(next)) self.addBlock(next) else next;
     }
 
+    // The one place residue and phase combine into a flat wheelIndex210 -
+    // runs at most twice per prime's whole lifetime (once via add(),
+    // once more if it passed through the pending band via activate()),
+    // unlike the old per-(residue,phase) row lookup this replaces, which
+    // ran once per segment a prime was actually due in - see this
+    // file's own RingEntry/HugeSievePrimeSlot doc for why that frequency
+    // difference is the whole point.
     fn toRingEntry(sievePrime: SievePrime, bucketsStart: usize, segmentsAhead: usize) RingEntry {
         const localOffset = sievePrime.currentBucketIndex - bucketsStart - segmentsAhead * SEGMENT_ELEMS;
         return RingEntry{
             .localOffset = @intCast(localOffset),
             .initialBucketIndex = sievePrime.initialBucketIndex,
-            .initialInBucketIndex = sievePrime.initialInBucketIndex,
-            .wheelStepIndex210 = sievePrime.wheelStepIndex210,
+            .wheelIndex210 = @as(u9, sievePrime.initialInBucketIndex) * Comptimes.ADMISSIBLE_RESIDUES_210.count + @as(u9, sievePrime.wheelStepIndex210),
         };
     }
 
@@ -325,7 +329,7 @@ pub const HugeSievePrimes = struct {
 /// next, returning the ADVANCED entry by value (not written back through
 /// `entry`) plus how many segments ahead it now lands. Takes `entry` BY
 /// VALUE, not `*RingEntry` - an earlier version wrote the new
-/// localOffset/wheelStepIndex210 back into the caller's entry pointer
+/// localOffset/wheelIndex210 back into the caller's entry pointer
 /// (the OLD block, about to be freed) and had the caller re-read
 /// `entry.*` afterward to copy it into `storeSievingPrime` - `perf
 /// annotate` showed the compiler couldn't prove that memory wasn't
@@ -335,9 +339,10 @@ pub const HugeSievePrimes = struct {
 /// new entry by value sidesteps the whole question - there's no shared
 /// memory location for the optimizer to reason about at all.
 inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: RingEntry) struct { entry: RingEntry, segmentsAhead: usize } {
-    const initialInBucketIndex = entry.initialInBucketIndex;
-    const wheelStepIndex210 = entry.wheelStepIndex210;
-    const step = Comptimes.WHEEL_PATTERNS_210[initialInBucketIndex][wheelStepIndex210];
+    // Single flat lookup - entry.wheelIndex210 already combines residue
+    // and phase (see toRingEntry), so unlike the old [ari][wsi] 2D
+    // table there is no row-offset combine to do here at all.
+    const step = Comptimes.WHEEL_PATTERNS_210[entry.wheelIndex210];
 
     const localOffset: usize = entry.localOffset;
     buckets[localOffset] &= step.bitMask;
@@ -351,13 +356,11 @@ inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: RingEntry) struct
         .entry = RingEntry{
             .localOffset = @intCast(newOffset - segmentsAhead * SEGMENT_ELEMS),
             .initialBucketIndex = entry.initialBucketIndex,
-            .initialInBucketIndex = initialInBucketIndex,
-            // u6 over a 48-long cycle isn't a power of two, so a runtime
-            // wrap (unlike the wheel-30 tiers' free u3 +% 1) would need a
-            // branch - baked into the table as data instead (primesieve's
-            // own wheel210 table does the same), so this is a plain load,
-            // no branch at all.
-            .wheelStepIndex210 = @intCast(step.nextWheelStepIndex210),
+            // Already flat and already the right next value - baked
+            // into the table as data (mirrors primesieve's own
+            // wheel210[...].next), so this is a plain load, no
+            // combine, no branch.
+            .wheelIndex210 = @intCast(step.nextWheelIndex210),
         },
         .segmentsAhead = segmentsAhead,
     };

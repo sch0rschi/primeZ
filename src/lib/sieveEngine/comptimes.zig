@@ -20,15 +20,15 @@ pub const WheelStep = struct {
     bitMask: u8,
     divMultiplicator: u8,
     residueAddend: u8,
-    // Only meaningful for WHEEL_PATTERNS_210 entries (huge tier's own
-    // wraparound is NOT a power of two, unlike wheel-30's u3 +% 1, so it
-    // needs this baked in as data instead of a runtime branch - see
-    // buildWheelPatterns210 and the huge_tier_ringentry_shrink project
-    // memory's "why huge is slower" finding). Inert padding (always 0,
-    // never read) for WHEEL_PATTERNS' own wheel-30 entries - this field
-    // already existed purely as size-rounding padding before, so reusing
-    // it here costs nothing.
-    nextWheelStepIndex210: u8 = 0,
+    // Inert padding (always 0, never read) - exists purely for
+    // size-rounding, kept at u8 since WHEEL_PATTERNS' own wheel-30
+    // wraparound is a free u3 +% 1 and needs no baked-in "next" data.
+    // Huge tier's own wheel-210 stepping uses a SEPARATE type
+    // (WheelStep210 below) instead of this field, to avoid growing
+    // this struct (and therefore WHEEL_PATTERNS' own per-row byte
+    // stride, shared with small/medium/large) for a need only huge
+    // tier has.
+    _reserved: u8 = 0,
 };
 
 pub const WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep = buildWheelPatterns();
@@ -51,21 +51,33 @@ pub const AdmissibleResidues210 = struct {
 
 pub const ADMISSIBLE_RESIDUES_210: AdmissibleResidues210 = buildAdmissibleResidues210();
 
-// Indexed [prime's own residue class mod 30][phase in the 48-long
-// wheel-210 cycle] - same shape as WHEEL_PATTERNS, just a longer cycle.
-//
-// Row length is padded to WHEEL_210_ROW_LEN (64, the next power of 2
-// above the true 48 = ADMISSIBLE_RESIDUES_210.count) purely so each
-// row's byte stride is a power of 2: huge tier's own per-hit lookup
-// (WHEEL_PATTERNS_210[ari][wsi]) needs `ari * rowStride` to find the
-// right row, and 48 isn't a power of 2, forcing a real multiply
-// (confirmed via perf annotate: `lea (%r8,%r8,2),%r13; shl $0x6,%r13`,
-// i.e. ari*3*64=ari*192) where every other tier's wheel-30 tables (8
-// steps/row, stride already a power of 2) get a plain shift for free.
-// `wsi` itself still only ever cycles 0..47 - columns 48..63 are
-// genuinely unreachable padding (zeroed, never read at runtime).
-const WHEEL_210_ROW_LEN = 64;
-pub const WHEEL_PATTERNS_210: [ADMISSIBLE_RESIDUES.count][WHEEL_210_ROW_LEN]WheelStep = buildWheelPatterns210();
+// Huge tier's own wheel-210 step data - {bitMask, divMultiplicator,
+// residueAddend} exactly like WheelStep, plus a FLAT "next" index
+// (0..383, covering all 8 residues x 48 phases combined into one
+// number) instead of storing residue and phase as two separate fields
+// on the ring-resident entry. Mirrors primesieve's own EratBig.cpp
+// `wheel210` table (`WheelElement{unsetBit, nextMultipleFactor,
+// correct, next}`) exactly: `next` is precomputed once, at table-build
+// time, so the hot per-hit path (hugeSievePrimes.zig's processOne)
+// never needs to recombine residue+phase into a row offset at runtime
+// - the SEPARATE row-stride-multiply this table used to need (padded
+// to WHEEL_210_ROW_LEN=64 for exactly that reason, previously) is gone
+// entirely, along with the run-time combine itself, not just its cost.
+// Explicit size-padded to a power of 2 (8 bytes), mirroring
+// WheelElement's own documented reason ("improves performance by up to
+// 15%") - not required for correctness, but avoids reintroducing a
+// non-native struct-width tax elsewhere.
+pub const WheelStep210 = extern struct {
+    bitMask: u8,
+    divMultiplicator: u8,
+    residueAddend: u8,
+    _pad: u8 = 0,
+    nextWheelIndex210: u16,
+    _pad2: u16 = 0,
+};
+
+const WHEEL_210_PHASE_COUNT = ADMISSIBLE_RESIDUES_210.count;
+pub const WHEEL_PATTERNS_210: [ADMISSIBLE_RESIDUES.count * WHEEL_210_PHASE_COUNT]WheelStep210 = buildWheelPatterns210();
 
 fn buildAdmissibleResidues() AdmissibleResidues {
     var position: usize = 0;
@@ -164,16 +176,14 @@ fn buildAdmissibleResidues210() AdmissibleResidues210 {
 // mod 30 must be wheel-30-admissible, AND k itself must not be divisible
 // by 7. The latter holds regardless of ar because a real huge-tier prime
 // is always > 7, so 7 | (prime*k) iff 7 | k.
-fn buildWheelPatterns210() [ADMISSIBLE_RESIDUES.count][WHEEL_210_ROW_LEN]WheelStep {
-    const zeroStep = WheelStep{ .bitMask = 0, .divMultiplicator = 0, .residueAddend = 0, .nextWheelStepIndex210 = 0 };
-    var wheelPatterns: [ADMISSIBLE_RESIDUES.count][WHEEL_210_ROW_LEN]WheelStep =
-        [_][WHEEL_210_ROW_LEN]WheelStep{[_]WheelStep{zeroStep} ** WHEEL_210_ROW_LEN} ** ADMISSIBLE_RESIDUES.count;
+fn buildWheelPatterns210() [ADMISSIBLE_RESIDUES.count * WHEEL_210_PHASE_COUNT]WheelStep210 {
+    var wheelPatterns: [ADMISSIBLE_RESIDUES.count * WHEEL_210_PHASE_COUNT]WheelStep210 = undefined;
 
-    for (ADMISSIBLE_RESIDUES.list, &wheelPatterns) |ar, *wp| {
+    for (ADMISSIBLE_RESIDUES.list, 0..) |ar, ariIndex| {
         var number = ar;
         var k: usize = 1;
         @setEvalBranchQuota(1_000_000);
-        for (wp[0..ADMISSIBLE_RESIDUES_210.count], 0..) |*step, stepIndex| {
+        for (0..WHEEL_210_PHASE_COUNT) |stepIndex| {
             const startNumber = number;
             number += ar;
             k += 1;
@@ -183,11 +193,18 @@ fn buildWheelPatterns210() [ADMISSIBLE_RESIDUES.count][WHEEL_210_ROW_LEN]WheelSt
                 k += 1;
                 steps += 1;
             }
-            step.* = .{
+            // Wraps within THIS residue's own 48-entry block, never
+            // into a different one - a huge-tier prime's own residue
+            // class mod 30 never changes as its wheel-210 phase
+            // advances (verified against primesieve's own wheel210
+            // table: its `next` field never crosses a group boundary
+            // either).
+            const nextStepIndex = (stepIndex + 1) % WHEEL_210_PHASE_COUNT;
+            wheelPatterns[ariIndex * WHEEL_210_PHASE_COUNT + stepIndex] = .{
                 .bitMask = ~@as(Types.SIEVE_BUCKET_TYPE, 1 << ADMISSIBLE_RESIDUES.reverseMap[startNumber % WHEEL_CIRCUMFERENCE]),
                 .divMultiplicator = @intCast(steps),
                 .residueAddend = @intCast((number / WHEEL_CIRCUMFERENCE) - (startNumber / WHEEL_CIRCUMFERENCE)),
-                .nextWheelStepIndex210 = @intCast((stepIndex + 1) % ADMISSIBLE_RESIDUES_210.count),
+                .nextWheelIndex210 = @intCast(ariIndex * WHEEL_210_PHASE_COUNT + nextStepIndex),
             };
         }
     }
