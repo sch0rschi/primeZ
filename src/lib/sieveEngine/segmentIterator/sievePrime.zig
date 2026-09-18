@@ -80,8 +80,8 @@ pub const HugeSievePrime = packed struct {
 
 pub const HugeSievePrimeSlot = packed struct {
     localOffset: u23,
-    initialBucketIndex: u32,
     wheelIndex210: u9,
+    initialBucketIndex: u32,
 };
 
 pub const PreHugeRingEntry = packed struct {

@@ -164,9 +164,10 @@ pub const HugeSievePrimes = struct {
     }
 
     fn destinationOf(sievePrime: SievePrime, ringLen: usize, bucketsStart: usize) usize {
+        _ = ringLen;
         std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
-        const segmentsAhead = (sievePrime.currentBucketIndex - bucketsStart) / SEGMENT_ELEMS;
-        return if (segmentsAhead < ringLen) segmentsAhead else ringLen;
+        const remaining = sievePrime.currentBucketIndex - bucketsStart;
+        return remaining / SEGMENT_ELEMS;
     }
 
     pub noinline fn activate(self: *HugeSievePrimes, bucketsStart: usize) void {
@@ -174,7 +175,8 @@ pub const HugeSievePrimes = struct {
         while (self.pendingStart < self.list.items.len) {
             const sievePrime = self.list.items[self.pendingStart];
             std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
-            const segmentsAhead = (sievePrime.currentBucketIndex - bucketsStart) / SEGMENT_ELEMS;
+            const remaining = sievePrime.currentBucketIndex - bucketsStart;
+            const segmentsAhead = remaining / SEGMENT_ELEMS;
             if (segmentsAhead >= ringLen) break;
 
             const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
@@ -242,7 +244,7 @@ inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: RingEntry) struct
 
     return .{
         .entry = RingEntry{
-            .localOffset = @intCast(newOffset - segmentsAhead * SEGMENT_ELEMS),
+            .localOffset = @intCast(newOffset % SEGMENT_ELEMS),
             .initialBucketIndex = entry.initialBucketIndex,
             .wheelIndex210 = @intCast(step.nextWheelIndex210),
         },

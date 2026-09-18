@@ -56,7 +56,7 @@ primesieve-build:
 
 primez-build:
 	rm -rf $(ROOT)/zig-out $(ROOT)/.zig-cache
-	cd $(ROOT) && zig build
+	cd $(ROOT) && zig build -Dcpu=native
 
 bench: primez-build primesieve-build
 	@python3 $(SCRIPTS)/compare.py $(PRIMEZ_BIN) $(PRIMESIEVE_BIN) --repeats $(REPEATS) $(ONLY_ARGS) $(SCENARIO_ARGS)

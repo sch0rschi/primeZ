@@ -145,9 +145,10 @@ pub const PreHugeSievePrimes = struct {
     }
 
     fn destinationOf(sievePrime: SievePrime, ringLen: usize, bucketsStart: usize) usize {
+        _ = ringLen;
         std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
-        const segmentsAhead = (sievePrime.currentBucketIndex - bucketsStart) / SEGMENT_ELEMS;
-        return if (segmentsAhead < ringLen) segmentsAhead else ringLen;
+        const remaining = sievePrime.currentBucketIndex - bucketsStart;
+        return remaining / SEGMENT_ELEMS;
     }
 
     pub noinline fn activate(self: *PreHugeSievePrimes, bucketsStart: usize) void {
@@ -155,7 +156,8 @@ pub const PreHugeSievePrimes = struct {
         while (self.pendingStart < self.list.items.len) {
             const sievePrime = self.list.items[self.pendingStart];
             std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
-            const segmentsAhead = (sievePrime.currentBucketIndex - bucketsStart) / SEGMENT_ELEMS;
+            const remaining = sievePrime.currentBucketIndex - bucketsStart;
+            const segmentsAhead = remaining / SEGMENT_ELEMS;
             if (segmentsAhead >= ringLen) break;
 
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
@@ -176,7 +178,7 @@ pub const PreHugeSievePrimes = struct {
         const ringLen = self.ringWritePos.len;
         const cursor = self.ringHead;
 
-        while (self.ringWritePos[cursor]) |wp| {
+        if (self.ringWritePos[cursor]) |wp| {
             const headBlock = blockOf(wp);
             headBlock.end = wp;
             self.ringWritePos[cursor] = null;
@@ -187,10 +189,15 @@ pub const PreHugeSievePrimes = struct {
                 const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(RingEntry);
 
                 for (items[0..fill]) |*entry| {
-                    const result = processOne(buckets, entry.*);
-                    std.debug.assert(result.segmentsAhead < ringLen);
-                    const slot = (cursor + result.segmentsAhead) & (ringLen - 1);
-                    self.storeSievingPrime(slot, &result.entry);
+                    const result1 = processOne(buckets, entry.*);
+                    const final = if (result1.segmentsAhead == 0) blk: {
+                        const result2 = processOne(buckets, result1.entry);
+                        std.debug.assert(result2.segmentsAhead >= 1);
+                        break :blk result2;
+                    } else result1;
+                    std.debug.assert(final.segmentsAhead >= 1 and final.segmentsAhead < ringLen);
+                    const slot = (cursor + final.segmentsAhead) & (ringLen - 1);
+                    self.storeSievingPrime(slot, &final.entry);
                 }
 
                 const next = b.next;
@@ -218,7 +225,7 @@ inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: RingEntry) struct
 
     return .{
         .entry = RingEntry{
-            .localOffset = @intCast(newOffset - segmentsAhead * SEGMENT_ELEMS),
+            .localOffset = @intCast(newOffset % SEGMENT_ELEMS),
             .initialBucketIndex = entry.initialBucketIndex,
             .initialInBucketIndex = initialInBucketIndex,
             .wheelStepIndex = wheelStepIndex +% 1,

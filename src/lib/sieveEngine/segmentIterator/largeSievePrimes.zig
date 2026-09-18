@@ -181,9 +181,10 @@ pub const LargeSievePrimes = struct {
     }
 
     fn destinationOf(sievePrime: SievePrime, ringLen: usize, bucketsStart: usize) usize {
+        _ = ringLen;
         std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
-        const segmentsAhead = (sievePrime.currentBucketIndex - bucketsStart) / SEGMENT_ELEMS;
-        return if (segmentsAhead < ringLen) segmentsAhead else ringLen;
+        const remaining = sievePrime.currentBucketIndex - bucketsStart;
+        return remaining / SEGMENT_ELEMS;
     }
 
     fn freeBucket(self: *LargeSievePrimes, b: *Bucket) void {
@@ -224,7 +225,8 @@ pub const LargeSievePrimes = struct {
         while (self.pendingStart < self.pending.items.len) {
             const sievePrime = self.pending.items[self.pendingStart];
             std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
-            const segmentsAhead = (sievePrime.currentBucketIndex - bucketsStart) / SEGMENT_ELEMS;
+            const remaining = sievePrime.currentBucketIndex - bucketsStart;
+            const segmentsAhead = remaining / SEGMENT_ELEMS;
             if (segmentsAhead >= ringLen) break;
 
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);

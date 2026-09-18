@@ -359,17 +359,17 @@ fn computePreSievePatternsBlob(b: *std.Build, groups: []const []const usize) []c
 }
 
 fn computeOptSegmentSizeKiB(l1CacheSizeKiB: usize, l2CacheSizeKiB: usize) usize {
-    if (l2CacheSizeKiB == 0) return floorPow2Clamped(l1CacheSizeKiB);
+    if (l2CacheSizeKiB == 0) return clampSegmentSizeKiB(l1CacheSizeKiB);
 
     const maxFromL2 = l2CacheSizeKiB / 2;
     const maxSize = @max(l1CacheSizeKiB, maxFromL2);
     const size = @min(l1CacheSizeKiB * 8, maxSize);
-    return floorPow2Clamped(size);
+    return clampSegmentSizeKiB(size);
 }
 
-fn floorPow2Clamped(kib: usize) usize {
+fn clampSegmentSizeKiB(kib: usize) usize {
     const clamped = std.math.clamp(kib, 16, 8192);
-    return @as(usize, 1) << std.math.log2_int(usize, clamped);
+    return std.math.ceilPowerOfTwoAssert(usize, clamped);
 }
 
 fn generalPurposeRegisterCount(arch: std.Target.Cpu.Arch) usize {
