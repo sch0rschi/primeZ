@@ -133,6 +133,19 @@ pub const PreHugeRingEntry = packed struct {
     wheelStepIndex: u3,
 };
 
+/// Bucket-resident encoding of a large-tier sieving prime (see
+/// largeSievePrimes.zig). Unlike every OTHER compact type here, this
+/// carries no residue/phase field at all: which of the 64 (residue,phase)
+/// bucket lists an entry lives in already tells you both, so storing it
+/// again would be pure redundancy. `initialBucketIndex` is the entry's
+/// own prime scaled the same way every other tier's field of that name
+/// is; `localOffset` is its position relative to whichever segment the
+/// bucket list holding it is about to cross off into.
+pub const LargeBucketSievePrime = packed struct {
+    localOffset: u23,
+    initialBucketIndex: u32,
+};
+
 /// Compact steady-state encoding for SmallSievePrimes' own `active` array
 /// (see smallSievePrimes.zig) - no segmentsAhead counter needed at all,
 /// unlike LargeHeadCompactSievePrime: a small-tier prime's own threshold

@@ -6,144 +6,193 @@ const Estimates = @import("../../estimates.zig");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
+const LargeBucketSievePrime = SievePrimeMod.LargeBucketSievePrime;
 
 const ringSizeFor = @import("hugeSievePrimes.zig").ringSizeFor;
 
 const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
 
-const BATCH_SIZE: usize = BuildUtils.GENERAL_PURPOSE_REGISTER_COUNT / 5;
+const RESIDUE_COUNT = Comptimes.ADMISSIBLE_RESIDUES.count;
+const WHEEL_INDEX_COUNT = RESIDUE_COUNT * RESIDUE_COUNT;
 
 const BLOCK_BYTES: usize = 8 * 1024;
-const BLOCK_HEADER_BYTES: usize = @sizeOf([*]SievePrime) + @sizeOf(?*anyopaque);
-const BLOCK_LEN: usize = (BLOCK_BYTES - BLOCK_HEADER_BYTES) / @sizeOf(SievePrime);
-const BLOCK_PAD_BYTES: usize = BLOCK_BYTES - BLOCK_HEADER_BYTES - BLOCK_LEN * @sizeOf(SievePrime);
 const BLOCK_ALIGNMENT = std.mem.Alignment.fromByteUnits(BLOCK_BYTES);
 
-// Mirrors hugeSievePrimes.zig's own Block exactly (see that file for the
-// full pointer-arithmetic rationale) - a separate type because this
-// tier's ring stores full SievePrime (16 bytes), not huge's compact
-// RingEntry (8 bytes): a large-tier ring entry is promoted into `active`
-// unchanged once drained, never re-encoded, so there's no equivalent
-// local-offset trick to shrink it with here.
-const Block = extern struct {
-    end: [*]SievePrime,
-    next: ?*Block,
-    itemsBytes: [BLOCK_LEN * @sizeOf(SievePrime) + BLOCK_PAD_BYTES]u8 align(@alignOf(SievePrime)) = undefined,
+// Places a just-discovered prime into the correct FUTURE segment's slot -
+// see hugeSievePrimes.zig for the full pointer-arithmetic rationale.
+// Needed because primes are discovered interleaved with sieving, well
+// ahead of the segment where their first hit falls; once a ring slot's
+// segment comes up, activate() drains it into the bucket lists below.
+const RING_BLOCK_HEADER_BYTES: usize = @sizeOf([*]SievePrime) + @sizeOf(?*anyopaque);
+const RING_BLOCK_LEN: usize = (BLOCK_BYTES - RING_BLOCK_HEADER_BYTES) / @sizeOf(SievePrime);
+const RING_BLOCK_PAD_BYTES: usize = BLOCK_BYTES - RING_BLOCK_HEADER_BYTES - RING_BLOCK_LEN * @sizeOf(SievePrime);
 
-    fn items(self: *Block) [*]SievePrime {
+const RingBlock = extern struct {
+    end: [*]SievePrime,
+    next: ?*RingBlock,
+    itemsBytes: [RING_BLOCK_LEN * @sizeOf(SievePrime) + RING_BLOCK_PAD_BYTES]u8 align(@alignOf(SievePrime)) = undefined,
+
+    fn items(self: *RingBlock) [*]SievePrime {
         return @ptrCast(&self.itemsBytes);
     }
 };
 
 comptime {
-    if (@sizeOf(Block) != BLOCK_BYTES) @compileError("Block must be exactly BLOCK_BYTES for the pointer-arithmetic fullness/ownership tricks below to be valid");
+    if (@sizeOf(RingBlock) != BLOCK_BYTES) @compileError("RingBlock must be exactly BLOCK_BYTES for the pointer-arithmetic fullness/ownership tricks below to be valid");
     if (!std.math.isPowerOfTwo(BLOCK_BYTES)) @compileError("BLOCK_BYTES must be a power of two");
 }
 
-fn isFull(ptr: [*]SievePrime) bool {
+fn isFullRing(ptr: [*]SievePrime) bool {
     return @intFromPtr(ptr) % BLOCK_BYTES == 0;
 }
 
-fn blockOf(ptr: [*]SievePrime) *Block {
+fn ringBlockOf(ptr: [*]SievePrime) *RingBlock {
     var address = @intFromPtr(ptr);
     address -= 1;
     address -= address % BLOCK_BYTES;
     return @ptrFromInt(address);
 }
 
-// See hugeSievePrimes.zig's maxBlocksFor for the full derivation - same
-// bound applies here. The +1 transient margin isn't strictly required
-// for THIS tier (a large-tier entry is written to a block exactly once
-// and only ever copied OUT into `active`, never rewritten to a
-// different block while its source block is still live - unlike huge's
-// ring, which continuously refiles entries between blocks every
-// apply()) but costs one spare 8KB block, so kept for symmetry with
-// hugeSievePrimes.zig's own bound and defense in depth against a future
-// change to this tier's activate()/add() ordering.
 fn maxBlocksFor(population: usize, ringLen: usize) usize {
-    return ringLen + (population + BLOCK_LEN - 1) / BLOCK_LEN + 1;
+    return ringLen + (population + RING_BLOCK_LEN - 1) / RING_BLOCK_LEN + 1;
+}
+
+// Same pointer-alignment fullness/ownership trick as RingBlock above, just
+// sized for the smaller bucket-resident LargeBucketSievePrime instead of
+// the wider ring-resident SievePrime.
+const BUCKET_HEADER_BYTES: usize = @sizeOf([*]LargeBucketSievePrime) + @sizeOf(?*anyopaque);
+const BUCKET_LEN: usize = (BLOCK_BYTES - BUCKET_HEADER_BYTES) / @sizeOf(LargeBucketSievePrime);
+const BUCKET_PAD_BYTES: usize = BLOCK_BYTES - BUCKET_HEADER_BYTES - BUCKET_LEN * @sizeOf(LargeBucketSievePrime);
+
+const Bucket = extern struct {
+    end: [*]LargeBucketSievePrime,
+    next: ?*Bucket,
+    itemsBytes: [BUCKET_LEN * @sizeOf(LargeBucketSievePrime) + BUCKET_PAD_BYTES]u8 align(@alignOf(LargeBucketSievePrime)) = undefined,
+
+    fn items(self: *Bucket) [*]LargeBucketSievePrime {
+        return @ptrCast(&self.itemsBytes);
+    }
+};
+
+comptime {
+    if (@sizeOf(Bucket) != BLOCK_BYTES) @compileError("Bucket must be exactly BLOCK_BYTES for the pointer-arithmetic fullness/ownership tricks below to be valid");
+}
+
+fn isFullBucket(ptr: [*]LargeBucketSievePrime) bool {
+    return @intFromPtr(ptr) % BLOCK_BYTES == 0;
+}
+
+fn bucketOf(ptr: [*]LargeBucketSievePrime) *Bucket {
+    var address = @intFromPtr(ptr);
+    address -= 1;
+    address -= address % BLOCK_BYTES;
+    return @ptrFromInt(address);
+}
+
+// Unlike the ring (population monotonically drains out of it, so only
+// ITS OWN write cursors ever waste a partial block), this structure is a
+// permanent ping-pong: every apply() call has 64 currentBuckets lists
+// just sealed from last round (each may end in one under-full block) AND
+// 64 buckets lists concurrently being written this round (each has at
+// most one currently-open under-full block) - so up to 2*WHEEL_INDEX_COUNT
+// blocks can be sitting under-full at once, on top of the population
+// bound's worth of fully-packed blocks, plus one transient margin bucket.
+fn maxBucketsFor(population: usize) usize {
+    return 2 * WHEEL_INDEX_COUNT + (population + BUCKET_LEN - 1) / BUCKET_LEN + 1;
 }
 
 // Primes above MEDIUM_LARGE_THRESHOLD, up to LARGE_HEAD_THRESHOLD (the
-// denser, multi-hit end of the large tier - see preHugeSievePrimes.zig
-// for the sparser sub-range above that). Steps BATCH_SIZE primes together
-// one wheel-step at a time in lockstep so their independent loads/stores
-// can overlap, instead of serializing per prime - worthwhile only where
-// a prime can hit a segment more than once, which is what this sub-range
-// (below largeHeadThreshold's "at most 2 hits" cutoff) guarantees.
+// denser, multi-hit end of the large tier - see preHugeSievePrimes.zig for
+// the sparser sub-range above that). 64 bucket lists keyed by wheelIndex =
+// residue*8 + phase, ping-ponged every segment, each crossed off by one of
+// 8 residue-class-specialized functions using a Duff's-device-style
+// dispatch (Zig's labeled-switch `continue`) so the initial indirect
+// branch is predicted correctly by the CPU once a bucket's own wheelIndex
+// is known.
 pub const LargeSievePrimes = struct {
-    active: std.ArrayList(SievePrime),
-
-    // Ring slots, Block-backed exactly like HugeSievePrimes' own - see
-    // that file's struct doc for why per-slot Block dedication (not just
-    // preallocation) is what keeps a drained slot's scan sequential.
     ringWritePos: []?[*]SievePrime,
     ringHead: usize,
 
-    freeBlocks: ?*Block,
-    blockPool: []align(BLOCK_BYTES) Block,
-    nextUnclaimed: usize,
+    ringFreeBlocks: ?*RingBlock,
+    ringBlockPool: []align(BLOCK_BYTES) RingBlock,
+    ringNextUnclaimed: usize,
 
     // Overflow band for primes whose first occurrence is still beyond the
-    // ring's reach at add() time (see HugeSievePrimes' struct docstring
-    // for the identical argument).
+    // ring's reach at add() time (see HugeSievePrimes' struct docstring for
+    // the identical argument).
     pending: std.ArrayList(SievePrime),
     pendingStart: usize,
+
+    // The bucket lists themselves - buckets is always the WRITE target
+    // (what activate()/refiles are currently filling for a future
+    // segment), currentBuckets is swapped in at the start of apply() to be
+    // this segment's read target.
+    buckets: [WHEEL_INDEX_COUNT]?[*]LargeBucketSievePrime,
+    currentBuckets: [WHEEL_INDEX_COUNT]?[*]LargeBucketSievePrime,
+
+    bucketFreeBlocks: ?*Bucket,
+    bucketPool: []align(BLOCK_BYTES) Bucket,
+    bucketNextUnclaimed: usize,
 
     pub fn init(allocator: std.mem.Allocator) !LargeSievePrimes {
         const ringLen = ringSizeFor(BuildUtils.LARGE_HEAD_THRESHOLD);
         const ringWritePos = try allocator.alloc(?[*]SievePrime, ringLen);
         @memset(ringWritePos, null);
 
-        // Same bound backs active/pending/the block pool: in the worst
-        // case every registered prime ends up in exactly one of
-        // active/pending/ring at once (ring's own worst case is bounded
-        // via maxBlocksFor, not this capacity directly), so sizing each
-        // independently to this bound is safe.
+        // Same bound backs pending/the ring block pool/the bucket pool: in
+        // the worst case every registered prime ends up in exactly one of
+        // pending/ring/buckets at once, so sizing each independently to
+        // this bound is safe.
         const capacity = Estimates.primeCountUpperBound(BuildUtils.LARGE_HEAD_THRESHOLD);
-        const blockCount = maxBlocksFor(capacity, ringLen);
-        const blockPool = try allocator.alignedAlloc(Block, BLOCK_ALIGNMENT, blockCount);
+        const ringBlockCount = maxBlocksFor(capacity, ringLen);
+        const ringBlockPool = try allocator.alignedAlloc(RingBlock, BLOCK_ALIGNMENT, ringBlockCount);
+        const bucketCount = maxBucketsFor(capacity);
+        const bucketPool = try allocator.alignedAlloc(Bucket, BLOCK_ALIGNMENT, bucketCount);
 
         return LargeSievePrimes{
-            .active = try std.ArrayList(SievePrime).initCapacity(allocator, capacity),
             .ringWritePos = ringWritePos,
             .ringHead = 0,
-            .freeBlocks = null,
-            .blockPool = blockPool,
-            .nextUnclaimed = 0,
+            .ringFreeBlocks = null,
+            .ringBlockPool = ringBlockPool,
+            .ringNextUnclaimed = 0,
             .pending = try std.ArrayList(SievePrime).initCapacity(allocator, capacity),
             .pendingStart = 0,
+            .buckets = [_]?[*]LargeBucketSievePrime{null} ** WHEEL_INDEX_COUNT,
+            .currentBuckets = [_]?[*]LargeBucketSievePrime{null} ** WHEEL_INDEX_COUNT,
+            .bucketFreeBlocks = null,
+            .bucketPool = bucketPool,
+            .bucketNextUnclaimed = 0,
         };
     }
 
     pub fn deinit(self: *LargeSievePrimes, allocator: std.mem.Allocator) void {
-        self.active.deinit(allocator);
         allocator.free(self.ringWritePos);
-        allocator.free(self.blockPool);
+        allocator.free(self.ringBlockPool);
         self.pending.deinit(allocator);
+        allocator.free(self.bucketPool);
     }
 
-    fn freeBlock(self: *LargeSievePrimes, b: *Block) void {
-        b.next = self.freeBlocks;
-        self.freeBlocks = b;
+    fn freeRingBlock(self: *LargeSievePrimes, b: *RingBlock) void {
+        b.next = self.ringFreeBlocks;
+        self.ringFreeBlocks = b;
     }
 
-    fn addBlock(self: *LargeSievePrimes, sealedWritePos: ?[*]SievePrime) [*]SievePrime {
-        // maxBlocksFor(...) bounds total simultaneously-live Blocks, so
+    fn addRingBlock(self: *LargeSievePrimes, sealedWritePos: ?[*]SievePrime) [*]SievePrime {
+        // maxBlocksFor(...) bounds total simultaneously-live RingBlocks, so
         // one of these two sources always has room.
-        const fresh = if (self.freeBlocks) |fb| blk: {
-            self.freeBlocks = fb.next;
+        const fresh = if (self.ringFreeBlocks) |fb| blk: {
+            self.ringFreeBlocks = fb.next;
             break :blk fb;
         } else blk: {
-            std.debug.assert(self.nextUnclaimed < self.blockPool.len);
-            const b = &self.blockPool[self.nextUnclaimed];
-            self.nextUnclaimed += 1;
+            std.debug.assert(self.ringNextUnclaimed < self.ringBlockPool.len);
+            const b = &self.ringBlockPool[self.ringNextUnclaimed];
+            self.ringNextUnclaimed += 1;
             break :blk b;
         };
         fresh.next = null;
 
         if (sealedWritePos) |wp| {
-            const old = blockOf(wp);
+            const old = ringBlockOf(wp);
             old.end = wp;
             fresh.next = old;
         }
@@ -151,10 +200,10 @@ pub const LargeSievePrimes = struct {
     }
 
     fn storeSievingPrime(self: *LargeSievePrimes, slot: usize, sievePrime: SievePrime) void {
-        const wp = self.ringWritePos[slot] orelse self.addBlock(null);
+        const wp = self.ringWritePos[slot] orelse self.addRingBlock(null);
         wp[0] = sievePrime;
         const next = wp + 1;
-        self.ringWritePos[slot] = if (isFull(next)) self.addBlock(next) else next;
+        self.ringWritePos[slot] = if (isFullRing(next)) self.addRingBlock(next) else next;
     }
 
     pub fn add(self: *LargeSievePrimes, sievePrime: SievePrime, bucketsStart: usize) void {
@@ -174,6 +223,44 @@ pub const LargeSievePrimes = struct {
         return if (segmentsAhead < ringLen) segmentsAhead else ringLen;
     }
 
+    fn freeBucket(self: *LargeSievePrimes, b: *Bucket) void {
+        b.next = self.bucketFreeBlocks;
+        self.bucketFreeBlocks = b;
+    }
+
+    fn addBucket(self: *LargeSievePrimes, sealedWritePos: ?[*]LargeBucketSievePrime) [*]LargeBucketSievePrime {
+        const fresh = if (self.bucketFreeBlocks) |fb| blk: {
+            self.bucketFreeBlocks = fb.next;
+            break :blk fb;
+        } else blk: {
+            std.debug.assert(self.bucketNextUnclaimed < self.bucketPool.len);
+            const b = &self.bucketPool[self.bucketNextUnclaimed];
+            self.bucketNextUnclaimed += 1;
+            break :blk b;
+        };
+        fresh.next = null;
+
+        if (sealedWritePos) |wp| {
+            const old = bucketOf(wp);
+            old.end = wp;
+            fresh.next = old;
+        }
+        return fresh.items();
+    }
+
+    // Runtime-indexed store into bucket list `wheelIndex`. Used both by
+    // activate()'s drain (a genuinely runtime wheelIndex, computed from
+    // whichever prime is being drained) and by crossOffGroup's refile
+    // (where the call site's wheelIndex argument is comptime-known, since
+    // `ari` and `phase` both are there - `inline fn` lets that constant
+    // fold all the way through to a literal-indexed array access).
+    inline fn storeInBucket(self: *LargeSievePrimes, wheelIndex: usize, entry: LargeBucketSievePrime) void {
+        const wp = self.buckets[wheelIndex] orelse self.addBucket(null);
+        wp[0] = entry;
+        const next = wp + 1;
+        self.buckets[wheelIndex] = if (isFullBucket(next)) self.addBucket(next) else next;
+    }
+
     pub noinline fn activate(self: *LargeSievePrimes, bucketsStart: usize) void {
         const ringLen = self.ringWritePos.len;
 
@@ -190,17 +277,25 @@ pub const LargeSievePrimes = struct {
 
         const cursor = self.ringHead;
         if (self.ringWritePos[cursor]) |wp| {
-            const headBlock = blockOf(wp);
+            const headBlock = ringBlockOf(wp);
             headBlock.end = wp;
 
-            var block: ?*Block = headBlock;
+            var block: ?*RingBlock = headBlock;
             while (block) |b| {
                 const items = b.items();
                 const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(SievePrime);
-                self.active.appendSliceAssumeCapacity(items[0..fill]);
+
+                for (items[0..fill]) |sievePrime| {
+                    const wheelIndex: usize = @as(usize, sievePrime.initialInBucketIndex) * RESIDUE_COUNT + sievePrime.wheelStepIndex;
+                    std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
+                    self.storeInBucket(wheelIndex, .{
+                        .localOffset = @intCast(sievePrime.currentBucketIndex - bucketsStart),
+                        .initialBucketIndex = sievePrime.initialBucketIndex,
+                    });
+                }
 
                 const next = b.next;
-                self.freeBlock(b);
+                self.freeRingBlock(b);
                 block = next;
             }
             self.ringWritePos[cursor] = null;
@@ -215,85 +310,74 @@ pub const LargeSievePrimes = struct {
         bucketsStart: usize,
         bucketsEndExclusive: usize,
     ) void {
-        applyBatch(BATCH_SIZE, buckets, bucketsStart, bucketsEndExclusive, self.active.items);
-    }
-
-    noinline fn applyBatch(
-        comptime batchSize: usize,
-        buckets: Types.SIEVE_BUCKETS_TYPE,
-        bucketsStart: usize,
-        bucketsEndExclusive: usize,
-        activeSievePrimes: []SievePrime,
-    ) void {
-        var readySievePrimes: [batchSize]*SievePrime = undefined;
-        var readySievePrimesCount: usize = 0;
-
-        for (activeSievePrimes) |*sievePrime| {
-            if (sievePrime.currentBucketIndex < bucketsEndExclusive) {
-                readySievePrimes[readySievePrimesCount] = sievePrime;
-                readySievePrimesCount += 1;
-                if (readySievePrimesCount == batchSize) {
-                    applyNSievePrimesIntoSegment(batchSize, buckets, bucketsStart, bucketsEndExclusive, &readySievePrimes);
-                    readySievePrimesCount = 0;
-                }
-            }
-        }
-
-        if (readySievePrimesCount > 0) {
-            inline for (0..batchSize) |leftoverCount| {
-                if (leftoverCount == readySievePrimesCount) {
-                    applyNSievePrimesIntoSegment(leftoverCount, buckets, bucketsStart, bucketsEndExclusive, readySievePrimes[0..leftoverCount]);
-                    break;
-                }
-            }
-        }
-    }
-
-    inline fn applyNSievePrimesIntoSegment(
-        comptime n: usize,
-        buckets: Types.SIEVE_BUCKETS_TYPE,
-        bucketsStart: usize,
-        bucketsEndExclusive: usize,
-        sievePrimes: *[n]*SievePrime,
-    ) void {
+        std.mem.swap([WHEEL_INDEX_COUNT]?[*]LargeBucketSievePrime, &self.buckets, &self.currentBuckets);
         const bucketCount = bucketsEndExclusive - bucketsStart;
 
-        var wheelPatterns: [n]*const [Comptimes.ADMISSIBLE_RESIDUES.count]Comptimes.WheelStep = undefined;
-        var initialBucketIndices: [n]usize = undefined;
-        var currentBucketIndices: [n]usize = undefined;
-        var wheelStepIndex: [n]usize = undefined;
-
-        inline for (0..n) |i| {
-            wheelPatterns[i] = &Comptimes.WHEEL_PATTERNS[sievePrimes[i].initialInBucketIndex];
-            initialBucketIndices[i] = @as(usize, sievePrimes[i].initialBucketIndex);
-            currentBucketIndices[i] = sievePrimes[i].currentBucketIndex - bucketsStart;
-            wheelStepIndex[i] = @as(usize, sievePrimes[i].wheelStepIndex);
-        }
-
-        var allWithinBucketEndExclusive = true;
-        while (allWithinBucketEndExclusive) {
-            inline for (0..n) |spi| {
-                const step = &wheelPatterns[spi][wheelStepIndex[spi]];
-                buckets[currentBucketIndices[spi]] &= step.bitMask;
-                currentBucketIndices[spi] +=
-                    initialBucketIndices[spi] * @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend);
-                wheelStepIndex[spi] += 1;
-                wheelStepIndex[spi] %= Comptimes.ADMISSIBLE_RESIDUES.count;
-                allWithinBucketEndExclusive &= currentBucketIndices[spi] < bucketCount;
+        // Iterate over the 64 bucket lists, dispatching by residue class
+        // (ari = wheelIndex / 8) to one of 8 specialized, noinline
+        // crossing-off functions.
+        for (0..WHEEL_INDEX_COUNT) |wheelIndex| {
+            if (self.currentBuckets[wheelIndex]) |wp| {
+                const bucket = bucketOf(wp);
+                bucket.end = wp;
+                self.currentBuckets[wheelIndex] = null;
+                const ari = wheelIndex / RESIDUE_COUNT;
+                const startPhase: u3 = @intCast(wheelIndex % RESIDUE_COUNT);
+                inline for (0..RESIDUE_COUNT) |comptimeAri| {
+                    if (comptimeAri == ari) {
+                        crossOffGroup(comptimeAri, self, buckets, bucketCount, bucket, startPhase);
+                    }
+                }
             }
-        }
-
-        inline for (0..n) |spi| {
-            while (currentBucketIndices[spi] < bucketCount) {
-                const step = wheelPatterns[spi][wheelStepIndex[spi]];
-                buckets[currentBucketIndices[spi]] &= step.bitMask;
-                currentBucketIndices[spi] +=
-                    initialBucketIndices[spi] * @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend);
-                wheelStepIndex[spi] += 1;
-                wheelStepIndex[spi] %= Comptimes.ADMISSIBLE_RESIDUES.count;
-            }
-            sievePrimes[spi].currentBucketIndex = currentBucketIndices[spi] + bucketsStart;
-            sievePrimes[spi].wheelStepIndex = @intCast(wheelStepIndex[spi]);
         }
     }
 };
+
+// One specialized crossing-off function per residue class `ari`.
+// WHEEL_PATTERNS[ari][phase] supplies {bitMask, divMultiplicator,
+// residueAddend} for that (residue, phase) pair; the `inline 0...7 =>
+// |phase|` prong makes `phase` comptime within each case body, so those
+// values are real immediates in the generated code, not table loads.
+// Zig's labeled-switch `continue :sw` gives a Duff's-device-style
+// dispatch: one switch per prime to enter at its own phase, then a
+// branch-predicted walk through consecutive hits until the segment
+// boundary check fires and refiles the entry for the next segment.
+noinline fn crossOffGroup(
+    comptime ari: usize,
+    self: *LargeSievePrimes,
+    buckets: Types.SIEVE_BUCKETS_TYPE,
+    bucketCount: usize,
+    bucket: *Bucket,
+    startPhase: u3,
+) void {
+    var block: ?*Bucket = bucket;
+    while (block) |b| {
+        const items = b.items();
+        const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(LargeBucketSievePrime);
+
+        for (items[0..fill]) |entry| {
+            var i: usize = entry.localOffset;
+            const sievingPrime: usize = entry.initialBucketIndex;
+
+            sw: switch (startPhase) {
+                inline 0...(RESIDUE_COUNT - 1) => |phase| {
+                    if (i >= bucketCount) {
+                        self.storeInBucket(ari * RESIDUE_COUNT + phase, .{
+                            .localOffset = @intCast(i - bucketCount),
+                            .initialBucketIndex = entry.initialBucketIndex,
+                        });
+                        break :sw;
+                    }
+                    const step = comptime Comptimes.WHEEL_PATTERNS[ari][phase];
+                    buckets[i] &= step.bitMask;
+                    i += sievingPrime * @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend);
+                    continue :sw comptime @as(u3, (@as(usize, phase) + 1) % RESIDUE_COUNT);
+                },
+            }
+        }
+
+        const next = b.next;
+        self.freeBucket(b);
+        block = next;
+    }
+}
