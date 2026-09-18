@@ -7,8 +7,6 @@ const XCount = struct {
     count: isize,
 };
 
-/// Counts primes <= x using Legendre's formula.
-/// pi(x) = phi(x, a) + a - 1.
 pub fn pi(allocator: std.mem.Allocator, x: u64) !usize {
     if (x < 2) {
         return 0;
@@ -32,12 +30,9 @@ pub fn pi(allocator: std.mem.Allocator, x: u64) !usize {
     return piResult;
 }
 
-/// phi(x, a) = count of integers in [1, x] with no prime factor among the first `a` primes (primes[0..a]).
-/// phi(x, a) = phi(x, a-1) - phi(floor(x/a), a-1), goes the recursion in bfs order.
 fn phi(allocator: std.mem.Allocator, x: u64, primes: []const isize) !usize {
     var sum: isize = 0;
 
-    // this list is sorted by XCount x value in ascending order
     var sourceList = try std.ArrayList(XCount).initCapacity(allocator, primes.len);
     defer sourceList.deinit(allocator);
     try sourceList.append(allocator, XCount{ .x = @intCast(x), .count = 1 });
@@ -56,9 +51,9 @@ fn phi(allocator: std.mem.Allocator, x: u64, primes: []const isize) !usize {
         mergedList.clearRetainingCapacity();
         try mergedList.ensureTotalCapacity(allocator, (len - smallXCutoffIndex) * 2);
 
-        var ixid = smallXCutoffIndex; // index for the recursions left side (x)
+        var ixid = smallXCutoffIndex;
         var xid = sourceList.items[ixid].x;
-        var ixda = smallXCutoffIndex; // index for the recursions right side (x/a)
+        var ixda = smallXCutoffIndex;
         var xda: isize = @divFloor(sourceList.items[ixda].x, pa);
 
         var groupX = xda;

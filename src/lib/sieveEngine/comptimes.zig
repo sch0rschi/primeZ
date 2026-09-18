@@ -20,24 +20,11 @@ pub const WheelStep = struct {
     bitMask: u8,
     divMultiplicator: u8,
     residueAddend: u8,
-    // Inert padding (always 0, never read) - exists purely for
-    // size-rounding, kept at u8 since WHEEL_PATTERNS' own wheel-30
-    // wraparound is a free u3 +% 1 and needs no baked-in "next" data.
-    // Huge tier's own wheel-210 stepping uses a SEPARATE type
-    // (WheelStep210 below) instead of this field, to avoid growing
-    // this struct (and therefore WHEEL_PATTERNS' own per-row byte
-    // stride, shared with small/medium/large) for a need only huge
-    // tier has.
     _reserved: u8 = 0,
 };
 
 pub const WHEEL_PATTERNS: [ADMISSIBLE_RESIDUES.count][ADMISSIBLE_RESIDUES.count]WheelStep = buildWheelPatterns();
 
-// Wheel-210 (2,3,5,7) variant, huge tier only: the underlying sieve array
-// stays wheel-30 (8 bits/bucket) everywhere, this only changes which
-// SEQUENCE of admissible-mod-30 landings a huge-tier prime's stepping
-// visits - skipping any landing whose k-multiplier is divisible by 7
-// (always already crossed off by presieved prime 7, so redundant).
 const WHEEL_PRIMES_210 = WHEEL_PRIMES ++ [_]usize{7};
 pub const WHEEL_CIRCUMFERENCE_210: comptime_int = WHEEL_CIRCUMFERENCE * 7;
 const ADMISSIBLE_RESIDUES_210_COUNT: comptime_int = computeAdmissibleResidueCount210();
@@ -51,22 +38,6 @@ pub const AdmissibleResidues210 = struct {
 
 pub const ADMISSIBLE_RESIDUES_210: AdmissibleResidues210 = buildAdmissibleResidues210();
 
-// Huge tier's own wheel-210 step data - {bitMask, divMultiplicator,
-// residueAddend} exactly like WheelStep, plus a FLAT "next" index
-// (0..383, covering all 8 residues x 48 phases combined into one
-// number) instead of storing residue and phase as two separate fields
-// on the ring-resident entry. Mirrors primesieve's own EratBig.cpp
-// `wheel210` table (`WheelElement{unsetBit, nextMultipleFactor,
-// correct, next}`) exactly: `next` is precomputed once, at table-build
-// time, so the hot per-hit path (hugeSievePrimes.zig's processOne)
-// never needs to recombine residue+phase into a row offset at runtime
-// - the SEPARATE row-stride-multiply this table used to need (padded
-// to WHEEL_210_ROW_LEN=64 for exactly that reason, previously) is gone
-// entirely, along with the run-time combine itself, not just its cost.
-// Explicit size-padded to a power of 2 (8 bytes), mirroring
-// WheelElement's own documented reason ("improves performance by up to
-// 15%") - not required for correctness, but avoids reintroducing a
-// non-native struct-width tax elsewhere.
 pub const WheelStep210 = extern struct {
     bitMask: u8,
     divMultiplicator: u8,
@@ -170,12 +141,6 @@ fn buildAdmissibleResidues210() AdmissibleResidues210 {
     };
 }
 
-// The wheel-210 admissibility test is NOT "is ar*k coprime to 210" (ar
-// itself may be 7, which would make every ar*k spuriously divisible by 7
-// and break that row) - it's two independent conditions: ar*k's residue
-// mod 30 must be wheel-30-admissible, AND k itself must not be divisible
-// by 7. The latter holds regardless of ar because a real huge-tier prime
-// is always > 7, so 7 | (prime*k) iff 7 | k.
 fn buildWheelPatterns210() [ADMISSIBLE_RESIDUES.count * WHEEL_210_PHASE_COUNT]WheelStep210 {
     var wheelPatterns: [ADMISSIBLE_RESIDUES.count * WHEEL_210_PHASE_COUNT]WheelStep210 = undefined;
 
@@ -193,12 +158,6 @@ fn buildWheelPatterns210() [ADMISSIBLE_RESIDUES.count * WHEEL_210_PHASE_COUNT]Wh
                 k += 1;
                 steps += 1;
             }
-            // Wraps within THIS residue's own 48-entry block, never
-            // into a different one - a huge-tier prime's own residue
-            // class mod 30 never changes as its wheel-210 phase
-            // advances (verified against primesieve's own wheel210
-            // table: its `next` field never crosses a group boundary
-            // either).
             const nextStepIndex = (stepIndex + 1) % WHEEL_210_PHASE_COUNT;
             wheelPatterns[ariIndex * WHEEL_210_PHASE_COUNT + stepIndex] = .{
                 .bitMask = ~@as(Types.SIEVE_BUCKET_TYPE, 1 << ADMISSIBLE_RESIDUES.reverseMap[startNumber % WHEEL_CIRCUMFERENCE]),

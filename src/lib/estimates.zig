@@ -10,13 +10,10 @@ pub fn primeCountUpperBound(n: Types.PRIME_TYPE) u64 {
     const logx = @log(xf);
 
     if (n >= 32_000) {
-        // Dusart 2016: π(x) < x / (ln x − 1 − 1.8/ln x) for x ≥ 32,299
         const denom = logx - 1.0 - (1.8 / logx);
         return @as(u64, @intFromFloat(@ceil(xf / denom)));
     }
 
-    // For 21 ≤ n < 32,000: Rosser & Schoenfeld, tightened
-    // π(x) < 1.25506 · x / ln x  holds for x ≥ 17
     const est = 1.25506 * xf / logx;
     return @as(u64, @intFromFloat(@ceil(est)));
 }

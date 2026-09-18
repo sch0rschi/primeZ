@@ -1,25 +1,4 @@
 #!/usr/bin/env python3
-"""Runs primeZ and primesieve over a fixed set of range scenarios and prints
-a side-by-side wall-time comparison table.
-
-The four scenarios (small, big, high, extreme) are the standard
-primeZ-vs-primesieve benchmark for this project, each calibrated to run in
-roughly 5-10s: two from-zero ranges, and two much higher offsets ("high",
-"extreme" - named for offset depth, not window width, since the two are
-close in width by construction) at roughly the same window width - see the
-project's "huge_tier_high_offset_regression" note for why offset (not
-window width) is the interesting variable at high start values.
-
-Both binaries print their own "Seconds: <f>" / "Primes: <n>" lines (avoids
-measurement overhead like a wrapping profiler would add); this script trusts
-those, taking the best-of-<repeats> time per scenario and cross-checking
-that both implementations agree on the prime count.
-
-usage: compare.py <primez-bin> <primesieve-bin> [--repeats N] [--only name,name,...] \
-    <name> <start> <limit> [<name> <start> <limit> ...]
-
-Stdlib only, no third-party dependencies.
-"""
 
 from __future__ import annotations
 
@@ -30,10 +9,7 @@ import sys
 SECONDS_RE = re.compile(r"Seconds:\s*([0-9.]+)")
 PRIMES_RE = re.compile(r"Primes:\s*([0-9]+)")
 
-
 def run(argv: list[str]) -> tuple[float, int]:
-    # primeZ reports via std.debug.print (stderr); primesieve's --time/-c
-    # report to stdout - combine both so either convention parses.
     result = subprocess.run(argv, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"error: {' '.join(argv)} exited with status {result.returncode}\n{result.stderr}", file=sys.stderr)
@@ -46,7 +22,6 @@ def run(argv: list[str]) -> tuple[float, int]:
         print(f"error: couldn't parse output of {' '.join(argv)}:\n{output}", file=sys.stderr)
         raise SystemExit(1)
     return float(seconds_m.group(1)), int(primes_m.group(1))
-
 
 def best_of(argv: list[str], repeats: int) -> tuple[float, int]:
     best_seconds: float | None = None
@@ -63,12 +38,10 @@ def best_of(argv: list[str], repeats: int) -> tuple[float, int]:
     assert best_seconds is not None and primes is not None
     return best_seconds, primes
 
-
 def fmt_ratio(pz_seconds: float, ps_seconds: float) -> str:
     if pz_seconds <= ps_seconds:
         return f"primeZ {ps_seconds / pz_seconds:.2f}x faster"
     return f"primesieve {pz_seconds / ps_seconds:.2f}x faster"
-
 
 def main() -> int:
     args = sys.argv[1:]
@@ -136,7 +109,6 @@ def main() -> int:
         )
 
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

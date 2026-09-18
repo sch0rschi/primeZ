@@ -16,25 +16,6 @@ comptime {
     if (SEGMENT_ELEMS > 1 << 23) @compileError("SEGMENT_ELEMS exceeds CompactSievePrime.localOffset's u23 budget - widen that field before raising this bound");
 }
 
-// Only small primes need this: their squares routinely fall within the
-// segment where they were discovered, and unlike medium/large primes they
-// aren't bucketed by wheel-step, so a prime can resume at any of the 8
-// steps. ROTATED_ACCUMULATED precomputes all 8 possible resume points so
-// each store address is `currentBucketIndex + <accumulated offset>`,
-// independent of the others in the same cycle.
-//
-// `entry.localOffset` is local to `bucketsStart` (the CURRENT segment's
-// start, constant across every stripe call within that segment) - unlike
-// the absolute-position design this replaced, no `- bucketsStart` at
-// entry. On exit, the raw local position can cross a segment boundary
-// (by at most one step's worth - this tier's own threshold guarantees a
-// single step is always tiny relative to a whole segment, let alone a
-// stripe, so it can never cross TWO boundaries in one step) - the single
-// `if (>= SEGMENT_ELEMS) -= SEGMENT_ELEMS` below folds that correction
-// into the SAME write every fire already performs, not a separate
-// recurring cost the way medium/large's own rebase attempt was (see the
-// huge_tier_ringentry_shrink project memory) - this tier's entries
-// essentially never have a "touched but not fired" segment once active.
 inline fn applyCompactSievePrimeIntoSegment(
     comptime inBucketIndex: u3,
     buckets: Types.SIEVE_BUCKETS_TYPE,
@@ -66,17 +47,6 @@ inline fn applyCompactSievePrimeIntoSegment(
         break :blk rotations;
     };
 
-    // The 8 bulk-loop bitmasks, one per resume point, packed 8-to-a-u64
-    // (one byte each) instead of read individually from
-    // ROTATED_ACCUMULATED[resumeAt][0..8].bitMask every bulk-loop
-    // iteration. `perf annotate` showed the compiler spilling 4 of the 8
-    // per-iteration bitmask bytes to the stack (real register pressure -
-    // `accumulatedBucketIndexAdvance`'s 9 usize values plus 8 more
-    // one-byte masks exceeds the available GPRs) and reloading them from
-    // stack every iteration; holding all 8 in ONE register and slicing a
-    // byte out via a comptime-constant shift measured as a real, small,
-    // consistent win (~0.5-1%) via interleaved benchmarking - see the
-    // huge_tier_ringentry_shrink project memory's "surgical audit" entry.
     const ROTATED_BITMASKS_PACKED: [Comptimes.ADMISSIBLE_RESIDUES.count]u64 = comptime blk: {
         var packedMasks: [Comptimes.ADMISSIBLE_RESIDUES.count]u64 = undefined;
         for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |resumeAt| {
@@ -123,28 +93,12 @@ inline fn applyCompactSievePrimeIntoSegment(
 }
 
 pub const SmallSievePrimes = struct {
-    // Not-yet-active entries: full absolute SievePrime, since a target
-    // can be arbitrarily far from `bucketsStart` at add() time (e.g. the
-    // self-bootstrap discovery sieve, always 0-based) - same "pending
-    // overflow band" argument every other tier's own pending makes.
-    // Sorted by position (see sortByPosition()), drained via an
-    // early-break scan in activate() exactly like large/huge's pending.
     pending: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(SievePrime),
     pendingStart: [Comptimes.ADMISSIBLE_RESIDUES.count]usize,
 
-    // Active entries: compact (localOffset + wheelStepIndex only, no
-    // counter - see CompactSievePrime's own docstring). Once an entry is
-    // promoted here it stays forever (this tier's population is never
-    // "done" early the way large-head's steady-state is bounded).
     active: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(CompactSievePrime),
 
     pub fn init(allocator: std.mem.Allocator) !SmallSievePrimes {
-        // Every small-tier prime is <= SMALL_MEDIUM_THRESHOLD, so reserving
-        // that upper bound for each residue's own list lets add()/activate()
-        // use appendAssumeCapacity. Both pending and active get the full
-        // bound (a prime lives in exactly one of the two at any moment, so
-        // this is generous but safe for each individually, same looseness
-        // the original single-array design already had).
         const capacity = Estimates.primeCountUpperBound(SMALL_MEDIUM_THRESHOLD);
         var pending: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(SievePrime) = undefined;
         var active: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(CompactSievePrime) = undefined;
@@ -180,13 +134,6 @@ pub const SmallSievePrimes = struct {
         self.pending[inBucketIndex].appendAssumeCapacity(registered);
     }
 
-    /// activate()'s early-break scan assumes each of the 8 per-residue
-    /// pending lists is sorted by currentBucketIndex. Discovery files
-    /// primes in increasing prime-value order, which only coincides with
-    /// increasing currentBucketIndex order when every target is relative
-    /// to 0 - targets relative to an arbitrary start aren't monotonic in
-    /// prime. Must be called once, after discovery and before the first
-    /// activate(), to restore that invariant.
     pub fn sortByPosition(self: *SmallSievePrimes) void {
         for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
             std.mem.sortUnstable(SievePrime, self.pending[ari].items, {}, SievePrimeMod.lessThanByCurrentBucketIndex);
@@ -233,12 +180,6 @@ pub const SmallSievePrimes = struct {
     }
 };
 
-// Kept for add()'s own same-segment-immediate-apply path, which operates
-// on the wide SievePrime (a freshly-discovered entry, not yet promoted to
-// the compact representation) - identical to the pre-existing logic,
-// unchanged, just renamed from applySievePrimeIntoSegment's old home
-// (this file) since applyCompactSievePrimeIntoSegment above now covers
-// the steady-state `active` path.
 inline fn applySievePrimeIntoSegment(
     comptime inBucketIndex: u3,
     buckets: Types.SIEVE_BUCKETS_TYPE,

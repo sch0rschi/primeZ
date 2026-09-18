@@ -1,8 +1,3 @@
-// Because n has a known upper bound (u64::MAX), we can use a fixed,
-// pre-computed table of witnesses instead of random ones. This gives
-// a deterministic, exact answer (Pomerance, Selfridge, Wagstaff and
-// Jaeschke in addition to Feitsma and Galway).
-// See: https://en.wikipedia.org/wiki/Miller–Rabin_primality_test#Testing_against_small_sets_of_bases
 
 const std = @import("std");
 

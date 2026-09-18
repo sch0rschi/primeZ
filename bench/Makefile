@@ -2,15 +2,6 @@ JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
 REPEATS ?= 1
 ONLY ?=
 
-# Four scenarios, each calibrated to run in roughly 5-10s so the suite stays
-# fast to iterate on: two from-zero ranges (~5s and ~10s) plus two much
-# higher offsets at (roughly) the same window width - "high" and "extreme"
-# name how deep the offset is, not the window width, since the two are
-# close in width by construction (picked so both land at ~10s; see below).
-# That pair lets offset effects be compared directly at fixed width, since
-# project memory "huge_tier_high_offset_regression" found perf tracks with
-# offset, not width. Override any bound with e.g.
-# `make -C bench bench BIG_LIMIT=2000000000000`.
 SMALL_START ?= 0
 SMALL_LIMIT ?= 70000000000
 BIG_START ?= 0

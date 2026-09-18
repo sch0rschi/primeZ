@@ -18,9 +18,6 @@ const BUCKET_HEADER_BYTES: usize = @sizeOf([*]SievePrime) + @sizeOf(?*anyopaque)
 const BUCKET_LEN: usize = (BLOCK_BYTES - BUCKET_HEADER_BYTES) / @sizeOf(SievePrime);
 const BUCKET_PAD_BYTES: usize = BLOCK_BYTES - BUCKET_HEADER_BYTES - BUCKET_LEN * @sizeOf(SievePrime);
 
-// Same pointer-alignment fullness/ownership trick as largeSievePrimes.zig's
-// own Bucket - a separate copy because this tier's cells store the wide
-// SievePrime (16 bytes), not large's compact bucket-resident type.
 const Bucket = extern struct {
     end: [*]SievePrime,
     next: ?*Bucket,
@@ -47,23 +44,12 @@ fn bucketOf(ptr: [*]SievePrime) *Bucket {
     return @ptrFromInt(address);
 }
 
-// This tier's whole population, exactly (not just an upper bound) - both
-// SMALL_MEDIUM_THRESHOLD and MEDIUM_LARGE_THRESHOLD are build-time
-// constants, so build.zig already ran a real sieve over this tier's whole
-// range to produce PRIME_COUNTS_BY_RESIDUE.
 const TOTAL_POPULATION: usize = blk: {
     var total: usize = 0;
     for (BuildUtils.PRIME_COUNTS_BY_RESIDUE) |count| total += count;
     break :blk total;
 };
 
-// See largeSievePrimes.zig's maxBucketsFor for the identical derivation:
-// every apply() call has CELL_COUNT cells just sealed from last round
-// (each may end in one under-full block) AND CELL_COUNT cells concurrently
-// being written this round (each has at most one open under-full block),
-// so up to 2*CELL_COUNT blocks can sit under-full at once, on top of the
-// population bound's worth of fully-packed blocks, plus one transient
-// margin bucket.
 fn maxBucketsFor(population: usize) usize {
     return 2 * CELL_COUNT + (population + BUCKET_LEN - 1) / BUCKET_LEN + 1;
 }
@@ -127,9 +113,6 @@ pub const MediumSievePrimes = struct {
         cursor.* = if (isFullBucket(next)) self.addBucket(next) else next;
     }
 
-    // A medium prime's square is never within the segment where it was
-    // discovered, so unlike SmallSievePrimes.add() there's nothing to
-    // cross off yet.
     pub fn add(
         self: *MediumSievePrimes,
         sievePrime: SievePrime,

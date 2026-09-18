@@ -1,8 +1,6 @@
 const std = @import("std");
 const Io = std.Io;
 
-// Plain relative import (not the named "buildUtils" module) -- this file
-// runs standalone via a bare `zig run`, with no module map set up for it.
 const WheelShape = @import("wheelShape.zig");
 
 const RESIDUE_CLASS_COUNT = WheelShape.RESIDUE_CLASS_COUNT;

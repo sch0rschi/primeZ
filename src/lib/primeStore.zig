@@ -15,7 +15,6 @@ pub const PrimeStore = struct {
     upperBoundQuery: Types.PRIME_TYPE,
     primes: ?[]Types.PRIME_TYPE = null,
 
-    /// isPrime(n) is fast (table lookup) for n <= lowerLimitInclusive.
     pub fn initForQueries(allocator: std.mem.Allocator, lowerLimitInclusive: usize) !PrimeStore {
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(lowerLimitInclusive));
         const buckets = try allocator.alignedAlloc(Types.SIEVE_BUCKET_TYPE, ALIGNMENT, bucketsLength);
@@ -33,18 +32,11 @@ pub const PrimeStore = struct {
         };
     }
 
-    /// Like initForQueries, plus getPrimes() returns sorted primes up to
-    /// primesLimitInclusive.
     pub fn initForQueriesAndPrimes(allocator: std.mem.Allocator, queryLowerLimitInclusive: usize, primesLimitInclusive: usize) !PrimeStore {
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(queryLowerLimitInclusive));
         const buckets = try allocator.alignedAlloc(Types.SIEVE_BUCKET_TYPE, ALIGNMENT, bucketsLength);
         const containers: Types.SIEVE_CONTAINERS_TYPE = std.mem.bytesAsSlice(u64, std.mem.sliceAsBytes(buckets));
 
-        // WHEEL_PRIMES is appended unconditionally below regardless of
-        // primesLimitInclusive (even when it's 0, as callers that only
-        // want the fast isPrime() lookup and never call getPrimes() do) -
-        // the bound must cover at least that, not just
-        // primeCountUpperBound's own estimate for primesLimitInclusive.
         const amountUpperBound = @max(Estimates.primeCountUpperBound(primesLimitInclusive), Comptimes.WHEEL_PRIMES.len);
         var primes = try std.ArrayList(Types.PRIME_TYPE).initCapacity(allocator, amountUpperBound);
         primes.appendSliceAssumeCapacity(&Comptimes.WHEEL_PRIMES);

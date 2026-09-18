@@ -13,9 +13,6 @@ const LARGE_HEAD_PRIME_COUNTS_BY_RESIDUE = "large_head_prime_counts_by_residue";
 const PRESIEVE_PATTERNS_BLOB = "presieve_patterns_blob";
 const PRESIEVE_GROUPS = "presieve_groups";
 
-/// Where `zig build regen-presieve-groups` writes a solved GROUPS config -
-/// a gitignored build-output path, never a tracked source file. Absent,
-/// the build falls back to PresieveGroups.GROUPS.
 const SOLVED_PRESIEVE_GROUPS_PATH = "zig-out/presieve-groups.txt";
 
 const DETECTION_FALLBACK = 32;
@@ -163,11 +160,6 @@ pub fn build(b: *std.Build) void {
     wireRegenPresieveGroups(b);
 }
 
-/// `zig build regen-presieve-groups`: re-solves presieveOpt/solve.py's
-/// costmodel MILP and writes the result to SOLVED_PRESIEVE_GROUPS_PATH;
-/// the next `zig build` picks it up automatically. Not part of the
-/// default build/test/install graph: solving needs a Python venv with
-/// highspy/ortools, which a normal build shouldn't have to depend on.
 fn wireRegenPresieveGroups(b: *std.Build) void {
     const force_resolve = b.option(
         bool,
@@ -284,9 +276,6 @@ fn computePrimeCountsByResidue(
     return counts;
 }
 
-/// Resolves which GROUPS this build uses: a solved config at
-/// SOLVED_PRESIEVE_GROUPS_PATH if present, else PresieveGroups.GROUPS.
-/// File format: one group per line, primes comma-separated.
 fn resolvePresieveGroups(b: *std.Build) []const []const usize {
     const path = b.pathFromRoot(SOLVED_PRESIEVE_GROUPS_PATH);
     const text = std.Io.Dir.cwd().readFileAlloc(b.graph.io, path, b.allocator, .limited(1024 * 1024)) catch |err| switch (err) {
@@ -319,12 +308,6 @@ fn resolvePresieveGroups(b: *std.Build) []const []const usize {
     return groups.items;
 }
 
-/// Runs genPreSievePatternsTool.zig to compute preSieve.zig's per-group
-/// AND-pattern buffers as raw bytes; preSieve.zig slices this blob apart
-/// at comptime using the same PRESIEVE_GROUPS/periodOf it already
-/// computes. `groups` is passed as argv (one token per group, primes
-/// comma-separated) since the tool runs as a bare `zig run` with no
-/// module map.
 fn computePreSievePatternsBlob(b: *std.Build, groups: []const []const usize) []const u8 {
     const tool_path = b.pathFromRoot("buildUtils/genPreSievePatternsTool.zig");
 
@@ -339,8 +322,6 @@ fn computePreSievePatternsBlob(b: *std.Build, groups: []const []const usize) []c
         argv.append(b.allocator, spec.items) catch @panic("OOM");
     }
 
-    // Not b.runAllowFail: its stdout capture is hard-capped at 400 KiB,
-    // far below the pattern blob's size (a few MiB).
     const io = b.graph.io;
     var child = std.process.spawn(io, .{
         .argv = argv.items,
@@ -383,16 +364,6 @@ fn computeOptSegmentSizeKiB(l1CacheSizeKiB: usize, l2CacheSizeKiB: usize) usize 
     const maxFromL2 = l2CacheSizeKiB / 2;
     const maxSize = @max(l1CacheSizeKiB, maxFromL2);
     const size = @min(l1CacheSizeKiB * 8, maxSize);
-    // Plain power-of-2 floor, matching primesieve's own Erat.cpp exactly
-    // (`sieveSize = floorPow2(sieveSize)` - it forces this whenever its
-    // EratBig is active, "EratBig requires a power of 2 sieve size").
-    // segment_stripe_rounding project memory has the full history: this
-    // used to round UP to the next L1-stripe multiple instead (a real,
-    // measured win for small/medium-heavy queries) - dropped per explicit
-    // user instruction for a true, unconditional 1:1 primesieve mimic,
-    // even though that stripe-rounding measurably helped small/medium and
-    // this reintroduces the regression it fixed. See that memory entry's
-    // own 2026-09-18 update for the full tradeoff this reverses.
     return floorPow2Clamped(size);
 }
 

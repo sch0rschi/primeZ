@@ -7,9 +7,6 @@ const Types = @import("sieveEngine/types.zig");
 const SegmentIterator = @import("sieveEngine/segmentIterator/root.zig").SegmentIterator;
 const Pi = @import("pi.zig");
 
-/// Computes the nth prime, zero indexed.
-/// nthPrime(0) = 2.
-/// nthPrime(1) = 3.
 pub fn nthPrime(allocator: std.mem.Allocator, nth: usize) !Types.PRIME_TYPE {
     if (nth < Comptimes.WHEEL_PRIMES.len) {
         return Comptimes.WHEEL_PRIMES[nth];
@@ -29,7 +26,7 @@ pub fn nthPrime(allocator: std.mem.Allocator, nth: usize) !Types.PRIME_TYPE {
                 primeCount += primesInContainerCount;
             } else {
                 var containerWorkingCopy: u64 = container;
-                for (0..nth - primeCount - 1) |_| { // removes all smaller primes from container
+                for (0..nth - primeCount - 1) |_| {
                     containerWorkingCopy &= containerWorkingCopy - 1;
                 }
                 const inBucketIndex: u6 = @intCast(@ctz(containerWorkingCopy));
@@ -41,8 +38,6 @@ pub fn nthPrime(allocator: std.mem.Allocator, nth: usize) !Types.PRIME_TYPE {
     unreachable;
 }
 
-/// get all primes with values at most limit.
-/// The array is to be freed by the caller.
 pub fn getPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) ![]Types.PRIME_TYPE {
     if (limit < 2) {
         return try allocator.alloc(Types.PRIME_TYPE, 0);
@@ -84,7 +79,6 @@ pub fn getPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) ![]Types
     return try primes.toOwnedSlice(allocator);
 }
 
-/// Sums all primes with values at most limit.
 pub fn sumPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Types.PRIME_TYPE {
     if (limit < 2) {
         return 0;
@@ -95,7 +89,7 @@ pub fn sumPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Types.P
     } else if (limit < 7) {
         return 10;
     }
-    var sum: Types.PRIME_TYPE = 10; // 2 + 3 + 5
+    var sum: Types.PRIME_TYPE = 10;
 
     var segmentIterator = try SegmentIterator.init(allocator, 0, limit);
     defer segmentIterator.deinit();
@@ -118,14 +112,6 @@ pub fn sumPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Types.P
     return sum;
 }
 
-/// Counts primes in [start, limit] (both inclusive). start defaults to 0
-/// for "count all primes up to limit" (pass 0 explicitly).
-///
-/// When start is far beyond limit's own sqrt, SegmentIterator skips
-/// straight from the end of sieving-prime discovery to start's segment
-/// instead of simulating every segment in between (see its own docstring)
-/// - counting a narrow, huge-magnitude range is fast, not just a narrow
-/// window into an otherwise full sieve from 0.
 pub fn piSieveCounting(allocator: std.mem.Allocator, start: u64, limit: u64) !usize {
     if (limit < 2 or start > limit) {
         return 0;
@@ -145,11 +131,6 @@ pub fn piSieveCounting(allocator: std.mem.Allocator, start: u64, limit: u64) !us
     var segmentIterator = try SegmentIterator.init(allocator, sieveFrom, limit);
     defer segmentIterator.deinit();
 
-    // Bits before sieveFrom's own admissible position must not be counted,
-    // even within the first segment actually yielded (which - thanks to
-    // SegmentIterator's container-alignment on jump - starts at most one
-    // container's worth of admissible numbers before sieveFrom, but for a
-    // small/no-jump range could be anywhere earlier in that segment).
     const precedingCount = if (sieveFrom == 0) 0 else Utils.admissibleCountUpTo(sieveFrom - 1);
     const headContainerIndex = precedingCount / 64;
     const headMask: Types.SIEVE_CONTAINER_TYPE = ~@as(Types.SIEVE_CONTAINER_TYPE, 0) << @intCast(precedingCount % 64);

@@ -35,7 +35,6 @@ pub fn divCeil(a: usize, b: usize) usize {
     return (a + b - 1) / b;
 }
 
-/// Returns the index of the least significant set bit in a bucket.
 pub fn lsb(n: Types.SIEVE_BUCKET_TYPE) Types.SIEVE_TYPE_SHIFT_TYPE {
     return @as(Types.SIEVE_TYPE_SHIFT_TYPE, @intCast(@ctz(n)));
 }

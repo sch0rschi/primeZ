@@ -11,8 +11,6 @@ pub fn main(init: std.process.Init) !void {
     var argIter = init.minimal.args.iterate();
     _ = argIter.next();
 
-    // primez [limit] or primez [start] [limit] - a single positional arg is
-    // taken as limit (start defaults to 0), matching prior CLI behavior.
     var start: usize = 0;
     var limit: usize = DEFAULT_LIMIT;
     if (argIter.next()) |firstArg| {

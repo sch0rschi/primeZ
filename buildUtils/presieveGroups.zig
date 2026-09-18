@@ -1,7 +1,3 @@
-// Default presieve grouping, used when no solved config exists (see
-// build.zig's resolvePresieveGroups) - primesieve's own "large" pre-sieve
-// buffer grouping (bench/primesieve/src/PreSieve.cpp's `bufferPrimes`),
-// not this project's own tuning output.
 pub const GROUPS = [_][]const usize{
     &[_]usize{ 7, 67, 71 },
     &[_]usize{ 11, 41, 73 },
