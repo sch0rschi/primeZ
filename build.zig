@@ -383,22 +383,17 @@ fn computeOptSegmentSizeKiB(l1CacheSizeKiB: usize, l2CacheSizeKiB: usize) usize 
     const maxFromL2 = l2CacheSizeKiB / 2;
     const maxSize = @max(l1CacheSizeKiB, maxFromL2);
     const size = @min(l1CacheSizeKiB * 8, maxSize);
-    const pow2 = floorPow2Clamped(size);
-
-    // The pow2 floor rarely lands on a multiple of the L1 stripe size (e.g.
-    // 48 KiB L1 -> 256 KiB segment is 5.33 stripes), leaving small tier's
-    // apply() a partial trailing stripe every segment. Rounding UP to the
-    // next stripe multiple both restores a whole number of stripes AND
-    // shrinks the total segment count vs. rounding down - benchmarked ~4-6%
-    // faster end to end than the plain pow2 floor at N=1e11 on this L1=48
-    // KiB/L2=1MiB machine, consistently across repeated/interleaved runs
-    // and reproduced (smaller effect, same direction) at N=1e10. Rounding
-    // DOWN to the stripe multiple instead (fewer buckets/segment, more
-    // segments overall) measured only a marginal win over the plain floor -
-    // the extra per-segment overhead from the added segments largely
-    // cancels the stripe-alignment gain.
-    const rem = pow2 % l1CacheSizeKiB;
-    return if (rem == 0) pow2 else pow2 + (l1CacheSizeKiB - rem);
+    // Plain power-of-2 floor, matching primesieve's own Erat.cpp exactly
+    // (`sieveSize = floorPow2(sieveSize)` - it forces this whenever its
+    // EratBig is active, "EratBig requires a power of 2 sieve size").
+    // segment_stripe_rounding project memory has the full history: this
+    // used to round UP to the next L1-stripe multiple instead (a real,
+    // measured win for small/medium-heavy queries) - dropped per explicit
+    // user instruction for a true, unconditional 1:1 primesieve mimic,
+    // even though that stripe-rounding measurably helped small/medium and
+    // this reintroduces the regression it fixed. See that memory entry's
+    // own 2026-09-18 update for the full tradeoff this reverses.
+    return floorPow2Clamped(size);
 }
 
 fn floorPow2Clamped(kib: usize) usize {

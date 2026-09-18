@@ -28,13 +28,23 @@ const MAX_WHEEL_STEP_FACTOR: usize = blk: {
 };
 
 // Rounded up to a power of two so the ring can be indexed with `&
-// (ring.len - 1)` instead of a runtime `%`. Reused by LargeSievePrimes.
+// (ring.len - 1)` instead of a runtime `%`. Reused by LargeSievePrimes
+// and PreHugeSievePrimes, both still head+mask-indexed.
 pub fn ringSizeFor(maxPrime: usize) usize {
+    return std.math.ceilPowerOfTwoAssert(usize, tightMinRingLen(maxPrime));
+}
+
+// Huge tier's OWN ring sizing, used un-padded (see HugeSievePrimes'
+// struct doc): rotates its ringWritePos array by one slot every apply()
+// call instead of head+mask indexing (mirrors primesieve's own
+// EratBig::crossOff `std::copy` rotation exactly), so it needs no power
+// of 2 at all - every slot the tight bound doesn't need is a slot that
+// doesn't have to be rotated through every segment.
+fn tightMinRingLen(maxPrime: usize) usize {
     const maxSievingPrime = maxPrime / Comptimes.WHEEL_CIRCUMFERENCE;
     const maxAdvance = maxSievingPrime * MAX_WHEEL_STEP_FACTOR + MAX_WHEEL_STEP_FACTOR;
     const maxMultipleIndexWithinSegment = (SEGMENT_ELEMS - 1) + maxAdvance;
-    const minRingLen = maxMultipleIndexWithinSegment / SEGMENT_ELEMS + 1;
-    return std.math.ceilPowerOfTwoAssert(usize, minRingLen);
+    return maxMultipleIndexWithinSegment / SEGMENT_ELEMS + 1;
 }
 
 const BLOCK_BYTES: usize = 8 * 1024;
@@ -154,9 +164,13 @@ pub const HugeSievePrimes = struct {
 
     // null means the slot has never been written to since it was last
     // drained. Everything else about a slot's block list is recovered on
-    // demand from this cursor (see blockOf/isFull).
+    // demand from this cursor (see blockOf/isFull). Slot 0 is ALWAYS
+    // "the current segment" - no head pointer at all, unlike large/
+    // preHuge's own ring: apply() physically rotates this array by one
+    // slot every call (mirrors primesieve's own EratBig::crossOff
+    // `std::copy` rotation exactly), so indexing a future slot is just
+    // `segmentsAhead` directly, no offset or mask needed.
     ringWritePos: []?[*]RingEntry,
-    ringHead: usize,
 
     // Head of the free list threading through blockPool (below) - a
     // Block returned here once its ring slot is fully drained by apply(),
@@ -172,7 +186,7 @@ pub const HugeSievePrimes = struct {
     nextUnclaimed: usize,
 
     pub fn init(allocator: std.mem.Allocator, maxPrime: usize) !HugeSievePrimes {
-        const ringLen = ringSizeFor(maxPrime);
+        const ringLen = tightMinRingLen(maxPrime);
         const ringWritePos = try allocator.alloc(?[*]RingEntry, ringLen);
         @memset(ringWritePos, null);
 
@@ -184,7 +198,6 @@ pub const HugeSievePrimes = struct {
             .list = try std.ArrayList(SievePrime).initCapacity(allocator, population),
             .pendingStart = 0,
             .ringWritePos = ringWritePos,
-            .ringHead = 0,
             .freeBlocks = null,
             .blockPool = blockPool,
             .nextUnclaimed = 0,
@@ -247,18 +260,17 @@ pub const HugeSievePrimes = struct {
         };
     }
 
-    /// `bucketsStart` must be the position ring[ringHead] currently
+    /// `bucketsStart` must be the position ring slot 0 currently
     /// represents (not necessarily the query's own first segment) -
     /// discoverSievingPrimes's self-bootstrapping sieve calls add()
-    /// interleaved with its own activate()/apply(), which advance
-    /// ringHead, so this can't assume ringHead is still 0.
+    /// interleaved with its own activate()/apply(), which rotate the
+    /// ring, so this can't assume slot 0 still represents position 0.
     pub fn add(self: *HugeSievePrimes, sievePrime: SievePrime, bucketsStart: usize) void {
         const ringLen = self.ringWritePos.len;
         const segmentsAhead = destinationOf(sievePrime, ringLen, bucketsStart);
         if (segmentsAhead < ringLen) {
-            const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
             const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
-            self.storeSievingPrime(slot, &entry);
+            self.storeSievingPrime(segmentsAhead, &entry);
         } else {
             self.list.appendAssumeCapacity(sievePrime);
         }
@@ -278,9 +290,8 @@ pub const HugeSievePrimes = struct {
             const segmentsAhead = (sievePrime.currentBucketIndex - bucketsStart) / SEGMENT_ELEMS;
             if (segmentsAhead >= ringLen) break;
 
-            const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
             const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
-            self.storeSievingPrime(slot, &entry);
+            self.storeSievingPrime(segmentsAhead, &entry);
             self.pendingStart += 1;
         }
     }
@@ -294,9 +305,8 @@ pub const HugeSievePrimes = struct {
         _ = bucketsEndExclusive;
         _ = bucketsStart; // RingEntry.localOffset is already segment-relative.
         const ringLen = self.ringWritePos.len;
-        const cursor = self.ringHead;
 
-        if (self.ringWritePos[cursor]) |wp| {
+        if (self.ringWritePos[0]) |wp| {
             const headBlock = blockOf(wp);
             headBlock.end = wp;
 
@@ -305,23 +315,47 @@ pub const HugeSievePrimes = struct {
                 const items = b.items();
                 const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(RingEntry);
 
-                for (items[0..fill]) |*entry| {
-                    const result = processOne(buckets, entry.*);
-                    // Never `cursor` itself: a huge prime advances at
-                    // least one segment ahead, always < ringLen.
+                // Process 2 entries per iteration to increase instruction
+                // level parallelism - mirrors primesieve's own
+                // EratBig::crossOff(sieve, prime, end) exactly, which
+                // pairs sieving primes for the same stated reason. No
+                // data dependency between the two processOne calls, so
+                // the compiler is free to interleave/overlap them.
+                var i: usize = 0;
+                while (i + 1 < fill) : (i += 2) {
+                    const result0 = processOne(buckets, items[i]);
+                    const result1 = processOne(buckets, items[i + 1]);
+                    std.debug.assert(result0.segmentsAhead >= 1 and result0.segmentsAhead < ringLen);
+                    std.debug.assert(result1.segmentsAhead >= 1 and result1.segmentsAhead < ringLen);
+                    self.storeSievingPrime(result0.segmentsAhead, &result0.entry);
+                    self.storeSievingPrime(result1.segmentsAhead, &result1.entry);
+                }
+                if (i < fill) {
+                    const result = processOne(buckets, items[i]);
                     std.debug.assert(result.segmentsAhead >= 1 and result.segmentsAhead < ringLen);
-                    const slot = (cursor + result.segmentsAhead) & (ringLen - 1);
-                    self.storeSievingPrime(slot, &result.entry);
+                    self.storeSievingPrime(result.segmentsAhead, &result.entry);
                 }
 
                 const next = b.next;
                 self.freeBlock(b);
                 block = next;
             }
-            self.ringWritePos[cursor] = null;
+            self.ringWritePos[0] = null;
         }
 
-        self.ringHead = (cursor + 1) & (ringLen - 1);
+        // Rotate by one slot - mirrors primesieve's own EratBig::crossOff
+        // exactly (`std::copy(buckets_.begin()+1, buckets_.end(),
+        // buckets_.begin()); buckets_.back() = bucket;`): slot 0 is
+        // always "the current segment," so a future slot needs no head
+        // offset or mask, just segmentsAhead directly (see add()/
+        // activate()/the loop above). ringWritePos[0] is always null
+        // here (either it already was, or the drain above just set it),
+        // so unlike primesieve - which eagerly hands the vacated slot a
+        // fresh bucket before rotating it to the back - there's nothing
+        // to carry forward: storeSievingPrime already lazily allocates
+        // on first write.
+        std.mem.copyForwards(?[*]RingEntry, self.ringWritePos[0 .. ringLen - 1], self.ringWritePos[1..ringLen]);
+        self.ringWritePos[ringLen - 1] = null;
     }
 };
 
