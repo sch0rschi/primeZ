@@ -220,9 +220,13 @@ pub const MediumSievePrimes = struct {
                 buckets[currentBucketIndex + abia] &= ws.bitMask;
             } else {
                 const newWheelStepIndex = wheelStepIndex +% @as(u3, wsi);
-                sievePrime.currentBucketIndex = currentBucketIndex + abia + bucketsStart;
-                sievePrime.wheelStepIndex = newWheelStepIndex;
-                self.storeInBucket(&self.mapsSwap[initialInBucketIndex][newWheelStepIndex], sievePrime.*);
+                const updated = SievePrime{
+                    .currentBucketIndex = currentBucketIndex + abia + bucketsStart,
+                    .initialBucketIndex = sievePrime.initialBucketIndex,
+                    .initialInBucketIndex = initialInBucketIndex,
+                    .wheelStepIndex = newWheelStepIndex,
+                };
+                self.storeInBucket(&self.mapsSwap[initialInBucketIndex][newWheelStepIndex], updated);
                 return;
             }
         } else {

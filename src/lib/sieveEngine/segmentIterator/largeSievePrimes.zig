@@ -15,7 +15,7 @@ const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
 const RESIDUE_COUNT = Comptimes.ADMISSIBLE_RESIDUES.count;
 const WHEEL_INDEX_COUNT = RESIDUE_COUNT * RESIDUE_COUNT;
 
-const BLOCK_BYTES: usize = 8 * 1024;
+const BLOCK_BYTES: usize = 16 * 1024;
 const BLOCK_ALIGNMENT = std.mem.Alignment.fromByteUnits(BLOCK_BYTES);
 
 const RING_BLOCK_HEADER_BYTES: usize = @sizeOf([*]SievePrime) + @sizeOf(?*anyopaque);

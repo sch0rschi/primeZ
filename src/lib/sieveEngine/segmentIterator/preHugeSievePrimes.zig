@@ -12,7 +12,7 @@ const ringSizeFor = @import("hugeSievePrimes.zig").ringSizeFor;
 const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
 const LARGE_HUGE_THRESHOLD: usize = BuildUtils.LARGE_HUGE_THRESHOLD;
 
-const BLOCK_BYTES: usize = 8 * 1024;
+const BLOCK_BYTES: usize = 16 * 1024;
 const BLOCK_HEADER_BYTES: usize = @sizeOf([*]RingEntry) + @sizeOf(?*anyopaque);
 const BLOCK_LEN: usize = (BLOCK_BYTES - BLOCK_HEADER_BYTES) / @sizeOf(RingEntry);
 const BLOCK_PAD_BYTES: usize = BLOCK_BYTES - BLOCK_HEADER_BYTES - BLOCK_LEN * @sizeOf(RingEntry);
@@ -115,11 +115,11 @@ pub const PreHugeSievePrimes = struct {
         return fresh.items();
     }
 
-    fn storeSievingPrime(self: *PreHugeSievePrimes, slot: usize, entry: *const RingEntry) void {
-        const wp = self.ringWritePos[slot] orelse self.addBlock(null);
+    fn storeSievingPrime(self: *PreHugeSievePrimes, ringWritePos: []?[*]RingEntry, slot: usize, entry: *const RingEntry) void {
+        const wp = ringWritePos[slot] orelse self.addBlock(null);
         wp[0] = entry.*;
         const next = wp + 1;
-        self.ringWritePos[slot] = if (isFull(next)) self.addBlock(next) else next;
+        ringWritePos[slot] = if (isFull(next)) self.addBlock(next) else next;
     }
 
     fn toRingEntry(sievePrime: SievePrime, bucketsStart: usize, segmentsAhead: usize) RingEntry {
@@ -138,7 +138,7 @@ pub const PreHugeSievePrimes = struct {
         if (segmentsAhead < ringLen) {
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
             const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
-            self.storeSievingPrime(slot, &entry);
+            self.storeSievingPrime(self.ringWritePos, slot, &entry);
         } else {
             self.list.appendAssumeCapacity(sievePrime);
         }
@@ -162,7 +162,7 @@ pub const PreHugeSievePrimes = struct {
 
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
             const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
-            self.storeSievingPrime(slot, &entry);
+            self.storeSievingPrime(self.ringWritePos, slot, &entry);
             self.pendingStart += 1;
         }
     }
@@ -175,13 +175,14 @@ pub const PreHugeSievePrimes = struct {
     ) void {
         _ = bucketsEndExclusive;
         _ = bucketsStart;
-        const ringLen = self.ringWritePos.len;
+        const ringWritePos = self.ringWritePos;
+        const ringLen = ringWritePos.len;
         const cursor = self.ringHead;
 
-        if (self.ringWritePos[cursor]) |wp| {
+        if (ringWritePos[cursor]) |wp| {
             const headBlock = blockOf(wp);
             headBlock.end = wp;
-            self.ringWritePos[cursor] = null;
+            ringWritePos[cursor] = null;
 
             var block: ?*Block = headBlock;
             while (block) |b| {
@@ -197,7 +198,7 @@ pub const PreHugeSievePrimes = struct {
                     } else result1;
                     std.debug.assert(final.segmentsAhead >= 1 and final.segmentsAhead < ringLen);
                     const slot = (cursor + final.segmentsAhead) & (ringLen - 1);
-                    self.storeSievingPrime(slot, &final.entry);
+                    self.storeSievingPrime(ringWritePos, slot, &final.entry);
                 }
 
                 const next = b.next;

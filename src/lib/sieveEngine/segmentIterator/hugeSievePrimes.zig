@@ -34,7 +34,7 @@ fn tightMinRingLen(maxPrime: usize) usize {
     return maxMultipleIndexWithinSegment / SEGMENT_ELEMS + 1;
 }
 
-const BLOCK_BYTES: usize = 8 * 1024;
+const BLOCK_BYTES: usize = 16 * 1024;
 const BLOCK_HEADER_BYTES: usize = @sizeOf([*]RingEntry) + @sizeOf(?*anyopaque);
 const BLOCK_LEN: usize = (BLOCK_BYTES - BLOCK_HEADER_BYTES) / @sizeOf(RingEntry);
 const BLOCK_PAD_BYTES: usize = BLOCK_BYTES - BLOCK_HEADER_BYTES - BLOCK_LEN * @sizeOf(RingEntry);
@@ -136,11 +136,11 @@ pub const HugeSievePrimes = struct {
         return fresh.items();
     }
 
-    fn storeSievingPrime(self: *HugeSievePrimes, slot: usize, entry: *const RingEntry) void {
-        const wp = self.ringWritePos[slot] orelse self.addBlock(null);
+    fn storeSievingPrime(self: *HugeSievePrimes, ringWritePos: []?[*]RingEntry, slot: usize, entry: *const RingEntry) void {
+        const wp = ringWritePos[slot] orelse self.addBlock(null);
         wp[0] = entry.*;
         const next = wp + 1;
-        self.ringWritePos[slot] = if (isFull(next)) self.addBlock(next) else next;
+        ringWritePos[slot] = if (isFull(next)) self.addBlock(next) else next;
     }
 
     fn toRingEntry(sievePrime: SievePrime, bucketsStart: usize, segmentsAhead: usize) RingEntry {
@@ -157,7 +157,7 @@ pub const HugeSievePrimes = struct {
         const segmentsAhead = destinationOf(sievePrime, ringLen, bucketsStart);
         if (segmentsAhead < ringLen) {
             const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
-            self.storeSievingPrime(segmentsAhead, &entry);
+            self.storeSievingPrime(self.ringWritePos, segmentsAhead, &entry);
         } else {
             self.list.appendAssumeCapacity(sievePrime);
         }
@@ -180,7 +180,7 @@ pub const HugeSievePrimes = struct {
             if (segmentsAhead >= ringLen) break;
 
             const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
-            self.storeSievingPrime(segmentsAhead, &entry);
+            self.storeSievingPrime(self.ringWritePos, segmentsAhead, &entry);
             self.pendingStart += 1;
         }
     }
@@ -193,9 +193,10 @@ pub const HugeSievePrimes = struct {
     ) void {
         _ = bucketsEndExclusive;
         _ = bucketsStart;
-        const ringLen = self.ringWritePos.len;
+        const ringWritePos = self.ringWritePos;
+        const ringLen = ringWritePos.len;
 
-        if (self.ringWritePos[0]) |wp| {
+        if (ringWritePos[0]) |wp| {
             const headBlock = blockOf(wp);
             headBlock.end = wp;
 
@@ -210,24 +211,24 @@ pub const HugeSievePrimes = struct {
                     const result1 = processOne(buckets, items[i + 1]);
                     std.debug.assert(result0.segmentsAhead >= 1 and result0.segmentsAhead < ringLen);
                     std.debug.assert(result1.segmentsAhead >= 1 and result1.segmentsAhead < ringLen);
-                    self.storeSievingPrime(result0.segmentsAhead, &result0.entry);
-                    self.storeSievingPrime(result1.segmentsAhead, &result1.entry);
+                    self.storeSievingPrime(ringWritePos, result0.segmentsAhead, &result0.entry);
+                    self.storeSievingPrime(ringWritePos, result1.segmentsAhead, &result1.entry);
                 }
                 if (i < fill) {
                     const result = processOne(buckets, items[i]);
                     std.debug.assert(result.segmentsAhead >= 1 and result.segmentsAhead < ringLen);
-                    self.storeSievingPrime(result.segmentsAhead, &result.entry);
+                    self.storeSievingPrime(ringWritePos, result.segmentsAhead, &result.entry);
                 }
 
                 const next = b.next;
                 self.freeBlock(b);
                 block = next;
             }
-            self.ringWritePos[0] = null;
+            ringWritePos[0] = null;
         }
 
-        std.mem.copyForwards(?[*]RingEntry, self.ringWritePos[0 .. ringLen - 1], self.ringWritePos[1..ringLen]);
-        self.ringWritePos[ringLen - 1] = null;
+        std.mem.copyForwards(?[*]RingEntry, ringWritePos[0 .. ringLen - 1], ringWritePos[1..ringLen]);
+        ringWritePos[ringLen - 1] = null;
     }
 };
 
