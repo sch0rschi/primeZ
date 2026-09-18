@@ -141,8 +141,18 @@ pub const PreHugeRingEntry = packed struct {
 /// own prime scaled the same way every other tier's field of that name
 /// is; `localOffset` is its position relative to whichever segment the
 /// bucket list holding it is about to cross off into.
-pub const LargeBucketSievePrime = packed struct {
-    localOffset: u23,
+///
+/// Deliberately NOT a `packed struct` with `localOffset: u23`: that
+/// packs to a 55-bit backing integer, an odd width LLVM has no native
+/// register op for - `perf annotate` showed every read materializing the
+/// whole value then re-deriving both fields via `bzhi`+shift+shift+or
+/// (legalizing i55), instead of two plain loads. Two byte-aligned u32
+/// fields cost one extra byte per entry but compile to direct loads -
+/// the same "avoid non-power-of-2/non-native-width arithmetic" lesson as
+/// WHEEL_210_ROW_LEN's padding fix, applied to a struct's bit width
+/// instead of a table's row stride.
+pub const LargeBucketSievePrime = struct {
+    localOffset: u32,
     initialBucketIndex: u32,
 };
 
