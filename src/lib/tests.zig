@@ -241,7 +241,7 @@ test "piSieveCounting with a range start" {
 
 }
 
-test "piSieveCounting with a range start reaching the huge tier" {
+test "piSieveCounting with a range start reaching the large tier" {
     const allocator = std.testing.allocator;
 
     const start: usize = 3_999_990_000;

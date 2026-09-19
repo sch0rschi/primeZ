@@ -6,11 +6,11 @@ const Estimates = @import("../../estimates.zig");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
-const CompactSievePrime = SievePrimeMod.SmallCompactSievePrime;
+const CompactSievePrime = SievePrimeMod.SmallStrideCompactSievePrime;
 
 const STRIPE_ELEMS: usize = BuildUtils.STRIPE_ELEMS;
 const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
-const SMALL_MEDIUM_THRESHOLD: usize = BuildUtils.SMALL_MEDIUM_THRESHOLD;
+const SMALL_STRIDE_THRESHOLD: usize = BuildUtils.SMALL_STRIDE_THRESHOLD;
 
 comptime {
     if (SEGMENT_ELEMS > 1 << 23) @compileError("SEGMENT_ELEMS exceeds CompactSievePrime.localOffset's u23 budget - widen that field before raising this bound");
@@ -92,14 +92,14 @@ inline fn applyCompactSievePrimeIntoSegment(
     }
 }
 
-pub const SmallSievePrimes = struct {
+pub const SmallStrideSievePrimes = struct {
     pending: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(SievePrime),
     pendingStart: [Comptimes.ADMISSIBLE_RESIDUES.count]usize,
 
     active: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(CompactSievePrime),
 
-    pub fn init(allocator: std.mem.Allocator) !SmallSievePrimes {
-        const capacity = Estimates.primeCountUpperBound(SMALL_MEDIUM_THRESHOLD);
+    pub fn init(allocator: std.mem.Allocator) !SmallStrideSievePrimes {
+        const capacity = Estimates.primeCountUpperBound(SMALL_STRIDE_THRESHOLD);
         var pending: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(SievePrime) = undefined;
         var active: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(CompactSievePrime) = undefined;
         for (&pending, &active) |*p, *a| {
@@ -107,20 +107,20 @@ pub const SmallSievePrimes = struct {
             a.* = try std.ArrayList(CompactSievePrime).initCapacity(allocator, capacity);
         }
 
-        return SmallSievePrimes{
+        return SmallStrideSievePrimes{
             .pending = pending,
             .pendingStart = .{0} ** Comptimes.ADMISSIBLE_RESIDUES.count,
             .active = active,
         };
     }
 
-    pub fn deinit(self: *SmallSievePrimes, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *SmallStrideSievePrimes, allocator: std.mem.Allocator) void {
         for (&self.pending) |*list| list.deinit(allocator);
         for (&self.active) |*list| list.deinit(allocator);
     }
 
     pub noinline fn add(
-        self: *SmallSievePrimes,
+        self: *SmallStrideSievePrimes,
         comptime inBucketIndex: u3,
         buckets: Types.SIEVE_BUCKETS_TYPE,
         bucketsStart: usize,
@@ -134,13 +134,13 @@ pub const SmallSievePrimes = struct {
         self.pending[inBucketIndex].appendAssumeCapacity(registered);
     }
 
-    pub fn sortByPosition(self: *SmallSievePrimes) void {
+    pub fn sortByPosition(self: *SmallStrideSievePrimes) void {
         for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
             std.mem.sortUnstable(SievePrime, self.pending[ari].items, {}, SievePrimeMod.lessThanByCurrentBucketIndex);
         }
     }
 
-    pub noinline fn activate(self: *SmallSievePrimes, bucketsStart: usize, bucketsEndExclusive: usize) void {
+    pub noinline fn activate(self: *SmallStrideSievePrimes, bucketsStart: usize, bucketsEndExclusive: usize) void {
         for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
             while (self.pendingStart[ari] < self.pending[ari].items.len) {
                 const sievePrime = self.pending[ari].items[self.pendingStart[ari]];
@@ -160,7 +160,7 @@ pub const SmallSievePrimes = struct {
     }
 
     pub noinline fn apply(
-        self: *SmallSievePrimes,
+        self: *SmallStrideSievePrimes,
         buckets: Types.SIEVE_BUCKETS_TYPE,
         bucketsStart: usize,
         bucketsEndExclusive: usize,

@@ -62,14 +62,14 @@ pub fn firstAdmissibleMultiple210(prime: usize, minRawNumberInclusive: usize) Ad
     };
 }
 
-pub const HugeSievePrime = packed struct {
+pub const LargeSievePrime = packed struct {
     currentBucketIndex: usize,
     initialBucketIndex: u32,
     initialInBucketIndex: u3,
     wheelStepIndex210: u6,
 
-    pub fn fromTarget210(target: AdmissibleMultiple210, bucketIndex: usize, inBucketIndex: u3) HugeSievePrime {
-        return HugeSievePrime{
+    pub fn fromTarget210(target: AdmissibleMultiple210, bucketIndex: usize, inBucketIndex: u3) LargeSievePrime {
+        return LargeSievePrime{
             .currentBucketIndex = target.bucketIndex,
             .initialBucketIndex = @intCast(bucketIndex),
             .initialInBucketIndex = inBucketIndex,
@@ -78,25 +78,25 @@ pub const HugeSievePrime = packed struct {
     }
 };
 
-pub const HugeSievePrimeSlot = packed struct {
+pub const LargeSievePrimeSlot = packed struct {
     localOffset: u23,
     wheelIndex210: u9,
     initialBucketIndex: u32,
 };
 
-pub const PreHugeRingEntry = packed struct {
+pub const PreLargeRingEntry = packed struct {
     localOffset: u23,
     initialBucketIndex: u32,
     initialInBucketIndex: u3,
     wheelStepIndex: u3,
 };
 
-pub const LargeBucketSievePrime = struct {
+pub const MediumBucketSievePrime = struct {
     localOffset: u32,
     initialBucketIndex: u32,
 };
 
-pub const SmallCompactSievePrime = packed struct {
+pub const SmallStrideCompactSievePrime = packed struct {
     localOffset: u23,
     initialBucketIndex: u32,
     wheelStepIndex: u3,

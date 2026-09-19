@@ -4,7 +4,7 @@
 Per-sieve-tier primeZ vs. primesieve comparison.
 
 primeZ's segmented sieve classifies each sieving prime into one of 5 tiers
-(small/medium/large/preHuge/huge) purely by the prime's own magnitude,
+(smallStride/smallSegment/medium/preLarge/large) purely by the prime's own magnitude,
 using thresholds derived at build time from L1/L2 cache size (see
 buildUtils/sieveLayoutMath.zig). Which tiers are "active" for a query is
 decided entirely by sqrt(limit) - the window width (limit - start) only
@@ -14,14 +14,14 @@ This script:
   1. Reads the *actual* build config straight from the primez binary's own
      printed "Sieve size" / "L1 stripe size" (not by reimplementing the
      build.zig formulas blind) and derives the 4 tier boundaries from it.
-  2. For small/medium: uses the maximal available window (start=0,
+  2. For smallStride/smallSegment: uses the maximal available window (start=0,
      limit=threshold^2) - sqrt(limit) can't be pushed higher without
      leaving the tier, so the window (and thus runtime) is structurally
      capped. These almost never reach --target-seconds; that's expected,
      not a bug - see the tier-bench SKILL.md for why.
-  3. For large/preHuge/huge: fixes limit = tier's own upper sqrt bound
-     squared (huge uses --huge-multiplier x its lower bound instead,
-     since huge has no upper bound), then calibrates a start offset
+  3. For medium/preLarge/large: fixes limit = tier's own upper sqrt bound
+     squared (large uses --large-multiplier x its lower bound instead,
+     since large has no upper bound), then calibrates a start offset
      (start = limit - width) so the window width alone hits
      ~--target-seconds, via a few geometric-scaling primez runs.
   4. Runs primesieve on the *exact same* [start, limit] windows, checks
@@ -30,7 +30,7 @@ This script:
 Usage:
   python3 bench/scripts/tier_bench.py [--target-seconds 10] [--tolerance 0.05]
       [--primez zig-out/bin/primez] [--primesieve bench/primesieve/build/primesieve]
-      [--huge-multiplier 10] [--only small,medium,large,preHuge,huge]
+      [--large-multiplier 10] [--only smallStride,smallSegment,medium,preLarge,large]
 
 Run from the repo root (relative default paths assume that).
 """
@@ -69,10 +69,10 @@ def detect_thresholds(primez_bin: str) -> dict[str, int]:
     return {
         "l1_kib": l1_kib,
         "seg_kib": seg_kib,
-        "small_medium": stripe_elems // 5,
-        "medium_large": segment_elems,
-        "large_head": segment_elems * 5,
-        "large_huge": segment_elems * 15,
+        "small_stride": stripe_elems // 5,
+        "small_segment": segment_elems,
+        "medium": segment_elems * 5,
+        "pre_large": segment_elems * 15,
     }
 
 
@@ -117,9 +117,9 @@ def main() -> int:
     ap.add_argument("--tolerance", type=float, default=0.05)
     ap.add_argument("--primez", default="zig-out/bin/primez")
     ap.add_argument("--primesieve", default="bench/primesieve/build/primesieve")
-    ap.add_argument("--huge-multiplier", type=float, default=10.0,
-                     help="sqrt(limit) for the huge scenario = this x the preHuge/huge boundary")
-    ap.add_argument("--only", default=None, help="comma-separated subset of small,medium,large,preHuge,huge")
+    ap.add_argument("--large-multiplier", type=float, default=10.0,
+                     help="sqrt(limit) for the large scenario = this x the preLarge/large boundary")
+    ap.add_argument("--only", default=None, help="comma-separated subset of smallStride,smallSegment,medium,preLarge,large")
     args = ap.parse_args()
 
     only = {s.strip() for s in args.only.split(",")} if args.only else None
@@ -128,32 +128,32 @@ def main() -> int:
     print(f"# detected: L1={th['l1_kib']}KiB segment={th['seg_kib']}KiB", file=sys.stderr)
     print(
         f"# tier boundaries (sieving-prime magnitude): "
-        f"small<={th['small_medium']} medium<={th['medium_large']} "
-        f"large<={th['large_head']} preHuge<={th['large_huge']} huge>{th['large_huge']}",
+        f"smallStride<={th['small_stride']} smallSegment<={th['small_segment']} "
+        f"medium<={th['medium']} preLarge<={th['pre_large']} large>{th['pre_large']}",
         file=sys.stderr,
     )
 
     tiers: list[dict] = []
 
-    for name, sqrt_bound in [("small", th["small_medium"]), ("medium", th["medium_large"])]:
+    for name, sqrt_bound in [("smallStride", th["small_stride"]), ("smallSegment", th["small_segment"])]:
         if only and name not in only:
             continue
         limit = sqrt_bound * sqrt_bound
         seconds, primes = primez_run(args.primez, 0, limit)
         tiers.append({"name": name, "start": 0, "limit": limit, "pz_seconds": seconds, "pz_primes": primes, "capped": True})
 
-    for name, sqrt_bound in [("large", th["large_head"]), ("preHuge", th["large_huge"])]:
+    for name, sqrt_bound in [("medium", th["medium"]), ("preLarge", th["pre_large"])]:
         if only and name not in only:
             continue
         limit = sqrt_bound * sqrt_bound
         start, seconds, primes = calibrate_width(args.primez, limit, args.target_seconds, args.tolerance)
         tiers.append({"name": name, "start": start, "limit": limit, "pz_seconds": seconds, "pz_primes": primes, "capped": False})
 
-    if not only or "huge" in only:
-        huge_sqrt = int(th["large_huge"] * args.huge_multiplier)
-        limit = huge_sqrt * huge_sqrt
+    if not only or "large" in only:
+        large_sqrt = int(th["pre_large"] * args.large_multiplier)
+        limit = large_sqrt * large_sqrt
         start, seconds, primes = calibrate_width(args.primez, limit, args.target_seconds, args.tolerance)
-        tiers.append({"name": "huge", "start": start, "limit": limit, "pz_seconds": seconds, "pz_primes": primes, "capped": False})
+        tiers.append({"name": "large", "start": start, "limit": limit, "pz_seconds": seconds, "pz_primes": primes, "capped": False})
 
     for t in tiers:
         print(f"== {t['name']}: [{t['start']}, {t['limit']}] ==", file=sys.stderr)

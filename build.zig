@@ -8,8 +8,8 @@ const L1_CACHE_SIZE_IN_KB = "l1_cache_size_in_kb";
 const L2_CACHE_SIZE_IN_KB = "l2_cache_size_in_kb";
 const OPT_SEGMENT_SIZE_IN_KB = "opt_segment_size_in_kb";
 const GENERAL_PURPOSE_REGISTER_COUNT = "general_purpose_register_count";
-const PRIME_COUNTS_BY_RESIDUE = "prime_counts_by_residue";
-const LARGE_HEAD_PRIME_COUNTS_BY_RESIDUE = "large_head_prime_counts_by_residue";
+const SMALL_SEGMENT_PRIME_COUNTS_BY_RESIDUE = "small_segment_prime_counts_by_residue";
+const PRE_LARGE_PRIME_COUNTS_BY_RESIDUE = "pre_large_prime_counts_by_residue";
 const PRESIEVE_PATTERNS_BLOB = "presieve_patterns_blob";
 const PRESIEVE_GROUPS = "presieve_groups";
 
@@ -80,20 +80,20 @@ pub fn build(b: *std.Build) void {
     options.addOption(usize, GENERAL_PURPOSE_REGISTER_COUNT, general_purpose_register_count);
     options.addOption(
         [RESIDUE_CLASS_COUNT]usize,
-        PRIME_COUNTS_BY_RESIDUE,
+        SMALL_SEGMENT_PRIME_COUNTS_BY_RESIDUE,
         computePrimeCountsByResidue(
             b,
-            SieveLayoutMath.smallMediumThreshold(l1_cache_size_in_kb, opt_segment_size_in_kb),
-            SieveLayoutMath.mediumLargeThreshold(opt_segment_size_in_kb),
+            SieveLayoutMath.smallStrideThreshold(l1_cache_size_in_kb, opt_segment_size_in_kb),
+            SieveLayoutMath.smallSegmentThreshold(opt_segment_size_in_kb),
         ),
     );
     options.addOption(
         [RESIDUE_CLASS_COUNT]usize,
-        LARGE_HEAD_PRIME_COUNTS_BY_RESIDUE,
+        PRE_LARGE_PRIME_COUNTS_BY_RESIDUE,
         computePrimeCountsByResidue(
             b,
-            SieveLayoutMath.largeHeadThreshold(opt_segment_size_in_kb),
-            SieveLayoutMath.largeHugeThreshold(opt_segment_size_in_kb),
+            SieveLayoutMath.mediumThreshold(opt_segment_size_in_kb),
+            SieveLayoutMath.preLargeThreshold(opt_segment_size_in_kb),
         ),
     );
     options.addOption([]const []const usize, PRESIEVE_GROUPS, presieve_groups);
@@ -116,13 +116,13 @@ pub fn build(b: *std.Build) void {
     test_options.addOption(usize, GENERAL_PURPOSE_REGISTER_COUNT, 16);
     test_options.addOption(
         [RESIDUE_CLASS_COUNT]usize,
-        PRIME_COUNTS_BY_RESIDUE,
-        computePrimeCountsByResidue(b, SieveLayoutMath.smallMediumThreshold(4, 4), SieveLayoutMath.mediumLargeThreshold(4)),
+        SMALL_SEGMENT_PRIME_COUNTS_BY_RESIDUE,
+        computePrimeCountsByResidue(b, SieveLayoutMath.smallStrideThreshold(4, 4), SieveLayoutMath.smallSegmentThreshold(4)),
     );
     test_options.addOption(
         [RESIDUE_CLASS_COUNT]usize,
-        LARGE_HEAD_PRIME_COUNTS_BY_RESIDUE,
-        computePrimeCountsByResidue(b, SieveLayoutMath.largeHeadThreshold(4), SieveLayoutMath.largeHugeThreshold(4)),
+        PRE_LARGE_PRIME_COUNTS_BY_RESIDUE,
+        computePrimeCountsByResidue(b, SieveLayoutMath.mediumThreshold(4), SieveLayoutMath.preLargeThreshold(4)),
     );
     test_options.addOption([]const []const usize, PRESIEVE_GROUPS, presieve_groups);
     test_options.addOption([]const u8, PRESIEVE_PATTERNS_BLOB, presieve_patterns_blob);
