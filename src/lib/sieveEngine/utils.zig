@@ -32,7 +32,7 @@ pub fn getSieveLength(limitInclusive: usize) usize {
 }
 
 pub fn divCeil(a: usize, b: usize) usize {
-    return (a + b - 1) / b;
+    return a / b + @intFromBool(a % b != 0);
 }
 
 pub fn lsb(n: Types.SIEVE_BUCKET_TYPE) Types.SIEVE_TYPE_SHIFT_TYPE {

@@ -1,3 +1,4 @@
+const std = @import("std");
 const Comptimes = @import("../comptimes.zig");
 const Utils = @import("../utils.zig");
 
@@ -31,15 +32,20 @@ pub const AdmissibleMultiple = struct {
     wheelStepIndex: u3,
 };
 
+fn bucketIndexOfMultiple(prime: usize, k: usize) usize {
+    const multiple, const overflowed = @mulWithOverflow(prime, k);
+    if (overflowed != 0) return std.math.maxInt(usize);
+    return multiple / Comptimes.WHEEL_CIRCUMFERENCE;
+}
+
 pub fn firstAdmissibleMultiple(prime: usize, minRawNumberInclusive: usize) AdmissibleMultiple {
     const k0 = if (minRawNumberInclusive == 0) prime else @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
     const r = k0 % Comptimes.WHEEL_CIRCUMFERENCE;
     const wheelStepIndex = Comptimes.ADMISSIBLE_RESIDUES.reverseMap[r];
     const k = k0 + (Comptimes.ADMISSIBLE_RESIDUES.list[wheelStepIndex] - r);
 
-    const multiple = prime * k;
     return .{
-        .bucketIndex = multiple / Comptimes.WHEEL_CIRCUMFERENCE,
+        .bucketIndex = bucketIndexOfMultiple(prime, k),
         .wheelStepIndex = @intCast(wheelStepIndex),
     };
 }
@@ -55,9 +61,8 @@ pub fn firstAdmissibleMultiple2310(prime: usize, minRawNumberInclusive: usize) A
     const wheelStepIndex2310 = Comptimes.ADMISSIBLE_RESIDUES_2310.reverseMap[r];
     const k = k0 + (Comptimes.ADMISSIBLE_RESIDUES_2310.list[wheelStepIndex2310] - r);
 
-    const multiple = prime * k;
     return .{
-        .bucketIndex = multiple / Comptimes.WHEEL_CIRCUMFERENCE,
+        .bucketIndex = bucketIndexOfMultiple(prime, k),
         .wheelStepIndex2310 = @intCast(wheelStepIndex2310),
     };
 }

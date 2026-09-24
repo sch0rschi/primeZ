@@ -1,5 +1,6 @@
 const std = @import("std");
 const BuildUtils = @import("buildUtils");
+const Comptimes = @import("comptimes.zig");
 
 pub const CacheInfo = BuildUtils.CacheInfo;
 pub const HardwareProfile = CacheInfo.HardwareProfile;
@@ -17,7 +18,19 @@ const SMALL_L2_STRIDE_DIVISOR = 5;
 const L2_STRIDE_L2_DIVISOR = 2;
 const SMALL_SEGMENT_SEGMENT_FACTOR = 1;
 const MEDIUM_SEGMENT_FACTOR = 5;
-const PRE_LARGE_SEGMENT_FACTOR = 15;
+const PRE_LARGE_SEGMENT_FACTOR = Comptimes.WHEEL_CIRCUMFERENCE / MIN_WHEEL_2310_STEP;
+
+const MIN_WHEEL_2310_STEP: usize = blk: {
+    @setEvalBranchQuota(100_000);
+    var m: usize = std.math.maxInt(usize);
+    for (Comptimes.WHEEL_PATTERNS_2310) |step| m = @min(m, step.divMultiplicator);
+    break :blk m;
+};
+
+comptime {
+    if (PRE_LARGE_SEGMENT_FACTOR * MIN_WHEEL_2310_STEP != Comptimes.WHEEL_CIRCUMFERENCE) @compileError("large tier needs every hit of a prime above preLargeThreshold to land at least one segment ahead");
+    if (PRE_LARGE_SEGMENT_FACTOR < MEDIUM_SEGMENT_FACTOR) @compileError("preLarge threshold must not be below the medium threshold");
+}
 
 pub const BUILD_PROFILE = HardwareProfile.fromKiB(BuildUtils.BUILD_L1D_KIB, BuildUtils.BUILD_L2_KIB, BuildUtils.BUILD_L3_KIB);
 

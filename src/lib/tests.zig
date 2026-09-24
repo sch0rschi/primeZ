@@ -339,3 +339,25 @@ test "segment size per query stays within the hardware bounds" {
     const huge = LayoutMod.HardwareProfile.fromKiB(64, 16 * 1024, 256 * 1024);
     try std.testing.expectEqual(LayoutMod.MAX_SEGMENT_ELEMS, LayoutMod.segmentElemsForQuery(huge, std.math.maxInt(u64)));
 }
+
+test "divCeil matches exact ceiling division, including near the top of u64" {
+    const Utils = @import("sieveEngine/utils.zig");
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const random = prng.random();
+    const edgeNumerators = [_]u64{ 0, 1, 29, 30, 31, (1 << 53) - 1, 1 << 53, (1 << 53) + 1, std.math.maxInt(u64) - 1, std.math.maxInt(u64) };
+    const edgeDivisors = [_]u64{ 1, 2, 30, (1 << 16) - 1, 1 << 16, (1 << 16) + 1, 4_294_967_291, 4_294_967_311, (1 << 53) + 1, std.math.maxInt(u64) };
+    for (edgeNumerators) |a| {
+        for (edgeDivisors) |b| {
+            try std.testing.expectEqual(@as(u64, @intCast((@as(u128, a) + b - 1) / b)), Utils.divCeil(a, b));
+        }
+    }
+    for (0..200_000) |_| {
+        const a = random.int(u64);
+        const b = switch (random.uintLessThan(u8, 3)) {
+            0 => random.intRangeAtMost(u64, 1, 1 << 20),
+            1 => random.intRangeAtMost(u64, 1 << 16, 1 << 33),
+            else => random.int(u64) | 1,
+        };
+        try std.testing.expectEqual(@as(u64, @intCast((@as(u128, a) + b - 1) / b)), Utils.divCeil(a, b));
+    }
+}
