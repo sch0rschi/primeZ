@@ -54,6 +54,7 @@ pub const Layout = struct {
         const l2Stride = std.mem.alignBackward(usize, std.math.clamp(l2StrideElems, l1Stride, segmentElems), 8);
         const smallL1StrideThreshold = l1Stride / SMALL_L1_STRIDE_DIVISOR;
         const smallL2StrideThreshold = @max(l2Stride / SMALL_L2_STRIDE_DIVISOR, smallL1StrideThreshold);
+        const smallSegmentThreshold = @max(segmentElems * SMALL_SEGMENT_SEGMENT_FACTOR, smallL2StrideThreshold);
         return .{
             .segmentElems = segmentElems,
             .segmentShift = std.math.log2_int(usize, segmentElems),
@@ -61,8 +62,8 @@ pub const Layout = struct {
             .l2StrideElems = l2Stride,
             .smallL1StrideThreshold = smallL1StrideThreshold,
             .smallL2StrideThreshold = smallL2StrideThreshold,
-            .smallSegmentThreshold = @max(segmentElems * SMALL_SEGMENT_SEGMENT_FACTOR, smallL2StrideThreshold),
-            .mediumThreshold = segmentElems * MEDIUM_SEGMENT_FACTOR,
+            .smallSegmentThreshold = smallSegmentThreshold,
+            .mediumThreshold = @max(segmentElems * MEDIUM_SEGMENT_FACTOR, smallSegmentThreshold),
             .preLargeThreshold = segmentElems * PRE_LARGE_SEGMENT_FACTOR,
             .presieve = presieve,
         };
