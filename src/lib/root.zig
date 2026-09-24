@@ -4,3 +4,4 @@ pub const PrimeEstimates = @import("estimates.zig");
 pub const PrimeStore = @import("primeStore.zig").PrimeStore;
 pub const Comptimes = @import("sieveEngine/comptimes.zig");
 pub const Layout = @import("sieveEngine/layout.zig");
+pub const PreSieve = @import("sieveEngine/preSieve.zig");

@@ -4,8 +4,12 @@ const LayoutMod = primeZ.Layout;
 
 const DEFAULT_LIMIT: usize = 100_000_000_000;
 
-fn printProfile(label: []const u8, p: LayoutMod.HardwareProfile) void {
-    std.debug.print("{s} = L1d {d} KiB, L2 {d} KiB, L3 {d} KiB\n", .{ label, p.l1dBytes / 1024, p.l2Bytes / 1024, p.l3Bytes / 1024 });
+fn printProfile(label: []const u8, profile: ?LayoutMod.HardwareProfile) void {
+    if (profile) |p| {
+        std.debug.print("{s} = L1d {d} KiB, L2 {d} KiB, L3 {d} KiB\n", .{ label, p.l1dBytes / 1024, p.l2Bytes / 1024, p.l3Bytes / 1024 });
+    } else {
+        std.debug.print("{s} = unavailable\n", .{label});
+    }
 }
 
 fn printLayout(label: []const u8, layout: LayoutMod.Layout) void {
@@ -20,6 +24,14 @@ fn printLayout(label: []const u8, layout: LayoutMod.Layout) void {
     });
 }
 
+fn parseProfile(text: []const u8) !LayoutMod.HardwareProfile {
+    var fields = std.mem.tokenizeScalar(u8, text, ',');
+    const l1 = try std.fmt.parseInt(usize, fields.next() orelse return error.InvalidProfile, 10);
+    const l2 = try std.fmt.parseInt(usize, fields.next() orelse return error.InvalidProfile, 10);
+    const l3 = try std.fmt.parseInt(usize, fields.next() orelse "0", 10);
+    return LayoutMod.HardwareProfile.fromKiB(l1, l2, l3);
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
@@ -28,11 +40,17 @@ pub fn main(init: std.process.Init) !void {
     _ = argIter.next();
 
     var printOnly = false;
+    var forceFallback = false;
+    var emulated: ?LayoutMod.HardwareProfile = null;
     var positional: [2]usize = undefined;
     var positionalCount: usize = 0;
     while (argIter.next()) |arg| {
         if (std.mem.eql(u8, arg, "--print-layout")) {
             printOnly = true;
+        } else if (std.mem.eql(u8, arg, "--fallback")) {
+            forceFallback = true;
+        } else if (std.mem.eql(u8, arg, "--profile")) {
+            emulated = try parseProfile(argIter.next() orelse return error.MissingProfile);
         } else {
             if (positionalCount == positional.len) return error.TooManyArguments;
             positional[positionalCount] = try std.fmt.parseInt(usize, arg, 10);
@@ -51,9 +69,30 @@ pub fn main(init: std.process.Init) !void {
         },
     }
 
+    var selection = LayoutMod.activeSelection();
+    if (emulated) |hw| {
+        selection = .{
+            .profile = hw,
+            .presieve = if (hw.eql(LayoutMod.BUILD_PROFILE)) .build else .fallback,
+            .detected = selection.detected,
+        };
+    }
+    if (forceFallback) selection.presieve = .fallback;
+    LayoutMod.overrideSelection(selection);
+
     const layouts = LayoutMod.layoutsForQuery(limit);
 
     printProfile("Build profile", LayoutMod.BUILD_PROFILE);
+    printProfile("Detected     ", selection.detected);
+    if (emulated != null) printProfile("Emulated     ", emulated);
+    std.debug.print("Presieve = {t}{s}\n", .{ selection.presieve, if (primeZ.PreSieve.BUILD_IS_FALLBACK) " (build presieve is the fallback presieve)" else "" });
+    const presieveKinds = if (primeZ.PreSieve.BUILD_IS_FALLBACK) .{LayoutMod.PresieveKind.fallback} else .{ LayoutMod.PresieveKind.build, LayoutMod.PresieveKind.fallback };
+    inline for (presieveKinds) |kind| {
+        const P = primeZ.PreSieve.of(kind);
+        std.debug.print("  {s} {t} groups ({d}):", .{ if (kind == selection.presieve or primeZ.PreSieve.BUILD_IS_FALLBACK) "*" else " ", kind, P.GROUP_COUNT });
+        inline for (P.GROUP_LIST) |group| std.debug.print(" {any}", .{group});
+        std.debug.print("\n", .{});
+    }
     printLayout("Query", layouts.query);
     printLayout("Self-sieve", layouts.selfSieve);
     std.debug.print("Threads = 1\n", .{});

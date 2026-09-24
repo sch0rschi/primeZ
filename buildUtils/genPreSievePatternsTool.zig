@@ -35,12 +35,16 @@ pub fn main(init: std.process.Init) !void {
     const stdout = &stdout_writer.interface;
 
     const args = try init.minimal.args.toSlice(arena);
-    for (args[1..]) |group_spec| {
+    if (args.len != 2) return error.ExpectedGroupsFile;
+    const groupsText = try Io.Dir.cwd().readFileAlloc(io, args[1], arena, .limited(1024 * 1024));
+    var lines = std.mem.tokenizeScalar(u8, groupsText, '\n');
+    while (lines.next()) |line| {
         var primes: std.ArrayList(usize) = .empty;
-        var fields = std.mem.tokenizeScalar(u8, group_spec, ',');
+        var fields = std.mem.tokenizeScalar(u8, line, ',');
         while (fields.next()) |field| {
-            try primes.append(arena, try std.fmt.parseInt(usize, field, 10));
+            try primes.append(arena, try std.fmt.parseInt(usize, std.mem.trim(u8, field, " \t\r"), 10));
         }
+        if (primes.items.len == 0) continue;
         const period = PresieveGroups.periodOf(primes.items);
         const pattern = try computeGroupPattern(arena, primes.items, period);
         try stdout.writeAll(pattern);

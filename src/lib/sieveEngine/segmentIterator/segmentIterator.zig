@@ -51,6 +51,7 @@ pub const SegmentIterator = struct {
     }
 
     pub noinline fn init(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize, layouts: QueryLayouts) !SegmentIterator {
+        std.debug.assert(layouts.query.presieve == layouts.selfSieve.presieve);
         const layout = layouts.query;
         const segmentElems = layout.segmentElems;
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(limitInclusive));
@@ -65,9 +66,9 @@ pub const SegmentIterator = struct {
         const startBucketIndex = ALIGNMENT.backward(startInclusive / Comptimes.WHEEL_CIRCUMFERENCE);
         const bucketsEndExclusive = @min(startBucketIndex + segmentElems, bucketsLength);
 
-        PreSieve.fill(buckets, startBucketIndex);
+        PreSieve.fill(layout.presieve, buckets, startBucketIndex);
         if (startBucketIndex == 0) {
-            @memcpy(buckets[0..PreSieve.OVERRIDE_BUCKET_COUNT], &PreSieve.OVERRIDE_BUCKETS);
+            PreSieve.applyOverride(layout.presieve, buckets);
         }
 
         const rootPrime = std.math.sqrt(limitInclusive);
@@ -136,7 +137,7 @@ pub const SegmentIterator = struct {
             }
             self.bucketsStart = candidateBucketsStart;
             self.bucketsEndExclusive = @min(self.bucketsStart + self.layout.segmentElems, self.bucketsLength);
-            PreSieve.fill(self.buckets, self.bucketsStart);
+            PreSieve.fill(self.layout.presieve, self.buckets, self.bucketsStart);
         }
 
         crossOffSegment(&self.smallStride, &self.smallSegment, &self.medium, &self.preLarge, &self.large, self.buckets, self.bucketsStart, self.bucketsEndExclusive);
@@ -215,8 +216,8 @@ noinline fn discoverSievingPrimes(
     var selfLarge = try LargeSievePrimes.init(allocator, selfLayout, dsp);
     defer selfLarge.deinit(allocator);
 
-    PreSieve.fill(selfBuckets, 0);
-    @memcpy(selfBuckets[0..PreSieve.OVERRIDE_BUCKET_COUNT], &PreSieve.OVERRIDE_BUCKETS);
+    PreSieve.fill(selfLayout.presieve, selfBuckets, 0);
+    PreSieve.applyOverride(selfLayout.presieve, selfBuckets);
 
     var selfBucketsStart: usize = 0;
     var selfBucketsEndExclusive: usize = @min(selfSegmentElems, selfBucketsLength);
@@ -231,7 +232,7 @@ noinline fn discoverSievingPrimes(
             if (candidate >= selfBucketsLength) break;
             selfBucketsStart = candidate;
             selfBucketsEndExclusive = @min(selfBucketsStart + selfSegmentElems, selfBucketsLength);
-            PreSieve.fill(selfBuckets, selfBucketsStart);
+            PreSieve.fill(selfLayout.presieve, selfBuckets, selfBucketsStart);
         }
 
         crossOffSegment(&selfSmallStride, &selfSmallSegment, &selfMedium, &selfPreLarge, &selfLarge, selfBuckets, selfBucketsStart, selfBucketsEndExclusive);
@@ -248,7 +249,7 @@ noinline fn discoverSievingPrimes(
                 const bitIndex = 64 * containerIndex + inContainerIndex;
                 const prime = Utils.admissibleNumberFromBitIndex(bitIndex);
                 if (prime > rootPrime) break :outer;
-                if (PreSieve.isPreSieved(prime)) continue;
+                if (PreSieve.isPreSieved(layout.presieve, prime)) continue;
 
                 const bucketIndex = bitIndex / BUCKET_BITS;
                 const inBucketIndex: u3 = @intCast(bitIndex % BUCKET_BITS);

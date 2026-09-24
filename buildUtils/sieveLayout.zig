@@ -16,6 +16,10 @@ pub const BUILD_L3_KIB: usize = config.build_l3_kib;
 
 pub const PINNED_SEGMENT_KIB: usize = config.pinned_segment_kib;
 
-pub const PRESIEVE_GROUPS: []const []const usize = config.presieve_groups;
+pub const PRESIEVE_GROUPS_FALLBACK: []const []const usize = &PresieveGroups.FALLBACK_GROUPS;
+pub const PRESIEVE_PATTERNS_BLOB_FALLBACK: []const u8 = @embedFile("presieve_patterns_fallback");
 
-pub const PRESIEVE_PATTERNS_BLOB: []const u8 = config.presieve_patterns_blob;
+pub const BUILD_PRESIEVE_IS_FALLBACK: bool = config.build_presieve_is_fallback;
+
+pub const PRESIEVE_GROUPS_BUILD: []const []const usize = if (BUILD_PRESIEVE_IS_FALLBACK) PRESIEVE_GROUPS_FALLBACK else PresieveGroups.parseGroups(@embedFile("presieve_groups_build"));
+pub const PRESIEVE_PATTERNS_BLOB_BUILD: []const u8 = if (BUILD_PRESIEVE_IS_FALLBACK) PRESIEVE_PATTERNS_BLOB_FALLBACK else @embedFile("presieve_patterns_build");

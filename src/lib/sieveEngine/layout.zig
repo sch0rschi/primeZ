@@ -1,7 +1,10 @@
 const std = @import("std");
 const BuildUtils = @import("buildUtils");
 
-pub const HardwareProfile = BuildUtils.CacheInfo.HardwareProfile;
+pub const CacheInfo = BuildUtils.CacheInfo;
+pub const HardwareProfile = CacheInfo.HardwareProfile;
+
+pub const PresieveKind = enum { build, fallback };
 
 pub const MAX_SEGMENT_ELEMS: usize = 1 << 23;
 pub const MIN_SEGMENT_ELEMS: usize = 16 * 1024;
@@ -24,8 +27,9 @@ pub const Layout = struct {
     smallSegmentThreshold: usize,
     mediumThreshold: usize,
     preLargeThreshold: usize,
+    presieve: PresieveKind,
 
-    pub fn pinned(segmentElems: usize, stripeElems: usize) Layout {
+    pub fn pinned(segmentElems: usize, stripeElems: usize, presieve: PresieveKind) Layout {
         std.debug.assert(std.math.isPowerOfTwo(segmentElems));
         std.debug.assert(segmentElems <= MAX_SEGMENT_ELEMS and segmentElems >= MIN_PINNED_SEGMENT_ELEMS);
         const stripe = std.mem.alignBackward(usize, @min(stripeElems, segmentElems), 8);
@@ -38,11 +42,12 @@ pub const Layout = struct {
             .smallSegmentThreshold = segmentElems * SMALL_SEGMENT_SEGMENT_FACTOR,
             .mediumThreshold = segmentElems * MEDIUM_SEGMENT_FACTOR,
             .preLargeThreshold = segmentElems * PRE_LARGE_SEGMENT_FACTOR,
+            .presieve = presieve,
         };
     }
 
-    pub fn forQuery(profile: HardwareProfile, limit: usize) Layout {
-        return pinned(segmentElemsForQuery(profile, limit), profile.l1dBytes);
+    pub fn forQuery(profile: HardwareProfile, limit: usize, presieve: PresieveKind) Layout {
+        return pinned(segmentElemsForQuery(profile, limit), profile.l1dBytes, presieve);
     }
 };
 
@@ -62,26 +67,55 @@ pub fn segmentElemsForQuery(profile: HardwareProfile, limit: usize) usize {
     return std.math.clamp(wanted, lower, upper);
 }
 
+pub const Selection = struct {
+    profile: HardwareProfile,
+    presieve: PresieveKind,
+    detected: ?HardwareProfile,
+};
+
+var selectionOverride: ?Selection = null;
+var cachedSelection: ?Selection = null;
+
+pub fn overrideSelection(selection: ?Selection) void {
+    selectionOverride = selection;
+}
+
+pub fn activeSelection() Selection {
+    if (selectionOverride) |s| return s;
+    if (cachedSelection) |s| return s;
+    const detected = CacheInfo.detect();
+    const selection: Selection = if (detected) |hw|
+        if (hw.eql(BUILD_PROFILE))
+            .{ .profile = BUILD_PROFILE, .presieve = .build, .detected = hw }
+        else
+            .{ .profile = hw, .presieve = .fallback, .detected = hw }
+    else
+        .{ .profile = BUILD_PROFILE, .presieve = .build, .detected = null };
+    cachedSelection = selection;
+    return selection;
+}
+
 pub const QueryLayouts = struct {
     query: Layout,
     selfSieve: Layout,
 
-    pub fn pinned(segmentElems: usize, stripeElems: usize) QueryLayouts {
-        const layout = Layout.pinned(segmentElems, stripeElems);
+    pub fn pinned(segmentElems: usize, stripeElems: usize, presieve: PresieveKind) QueryLayouts {
+        const layout = Layout.pinned(segmentElems, stripeElems, presieve);
         return .{ .query = layout, .selfSieve = layout };
     }
 
-    pub fn forQuery(profile: HardwareProfile, limit: usize) QueryLayouts {
+    pub fn forQuery(profile: HardwareProfile, limit: usize, presieve: PresieveKind) QueryLayouts {
         return .{
-            .query = Layout.forQuery(profile, limit),
-            .selfSieve = Layout.forQuery(profile, std.math.sqrt(limit)),
+            .query = Layout.forQuery(profile, limit, presieve),
+            .selfSieve = Layout.forQuery(profile, std.math.sqrt(limit), presieve),
         };
     }
 };
 
 pub fn layoutsForQuery(limit: usize) QueryLayouts {
+    const selection = activeSelection();
     if (BuildUtils.PINNED_SEGMENT_KIB != 0) {
-        return QueryLayouts.pinned(BuildUtils.PINNED_SEGMENT_KIB * 1024, BUILD_PROFILE.l1dBytes);
+        return QueryLayouts.pinned(BuildUtils.PINNED_SEGMENT_KIB * 1024, selection.profile.l1dBytes, selection.presieve);
     }
-    return QueryLayouts.forQuery(BUILD_PROFILE, limit);
+    return QueryLayouts.forQuery(selection.profile, limit, selection.presieve);
 }

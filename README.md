@@ -48,18 +48,31 @@ zig build
 
 The build is optimized for a hardware profile: the L1d, L2 and L3 cache
 sizes. On a native build they are auto-detected; they can be overridden
-(values in KiB), and cross builds without them default to 32 KiB L1d,
-1 MiB L2 and 16 MiB L3:
+(values in KiB), and cross builds without them default to a mainstream
+fallback profile (32 KiB L1d, 1 MiB L2, 16 MiB L3):
 
 ``` sh
 zig build -Dl1cs=48 -Dl2cs=1024 -Dl3cs=16384
 ```
 
-The segment size is chosen per query
+At runtime the binary detects the actual cache sizes. If they match the
+build profile it uses the build-optimal presieve; otherwise it derives the
+layout from the detected caches and uses a fallback presieve tuned for the
+fallback profile. The segment size is chosen per query
 (`clamp(2*sqrt(limit), L2/2, L3/4)`, as a power of two, at most 8 MiB), and
-the tier thresholds scale with it. `primez --print-layout <limit>` shows the
-layout a query would use. `-Dsegsz=<KiB>` pins the segment size for
-experiments.
+the tier thresholds scale with it. `primez --print-layout <limit>` shows
+the decision; `--profile l1,l2,l3` emulates another machine and
+`--fallback` forces the fallback presieve. `-Dsegsz=<KiB>` pins the
+segment size for experiments.
+
+The binary carries two presieves. The build presieve's groups are solved
+during the build for the build profile's L1d size and SIMD width with
+presieveOpt's MILP (needs `python3` and `make`; the solve is cached). The
+fallback presieve uses groups solved once for 32 KiB L1d and AVX2 and
+hardcoded in `buildUtils/presieveGroups.zig`. When the build profile has the
+fallback's L1d size and SIMD width, or the solver is disabled
+(`-Dpresieve_solver=false`) or unavailable, only the fallback presieve is
+built in.
 
 ### Comparing against primesieve
 
