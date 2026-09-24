@@ -12,7 +12,9 @@ pub const MIN_PINNED_SEGMENT_ELEMS: usize = 4096;
 pub const MIN_SEGMENT_SHIFT = std.math.log2_int(usize, MIN_PINNED_SEGMENT_ELEMS);
 pub const MAX_SEGMENT_SHIFT = std.math.log2_int(usize, MAX_SEGMENT_ELEMS);
 
-const SMALL_STRIDE_STRIPE_DIVISOR = 5;
+const SMALL_L1_STRIDE_DIVISOR = 5;
+const SMALL_L2_STRIDE_DIVISOR = 5;
+const L2_STRIDE_L2_DIVISOR = 2;
 const SMALL_SEGMENT_SEGMENT_FACTOR = 1;
 const MEDIUM_SEGMENT_FACTOR = 5;
 const PRE_LARGE_SEGMENT_FACTOR = 15;
@@ -22,24 +24,31 @@ pub const BUILD_PROFILE = HardwareProfile.fromKiB(BuildUtils.BUILD_L1D_KIB, Buil
 pub const Layout = struct {
     segmentElems: usize,
     segmentShift: std.math.Log2Int(usize),
-    stripeElems: usize,
-    smallStrideThreshold: usize,
+    l1StrideElems: usize,
+    l2StrideElems: usize,
+    smallL1StrideThreshold: usize,
+    smallL2StrideThreshold: usize,
     smallSegmentThreshold: usize,
     mediumThreshold: usize,
     preLargeThreshold: usize,
     presieve: PresieveKind,
 
-    pub fn pinned(segmentElems: usize, stripeElems: usize, presieve: PresieveKind) Layout {
+    pub fn pinned(segmentElems: usize, l1StrideElems: usize, l2StrideElems: usize, presieve: PresieveKind) Layout {
         std.debug.assert(std.math.isPowerOfTwo(segmentElems));
         std.debug.assert(segmentElems <= MAX_SEGMENT_ELEMS and segmentElems >= MIN_PINNED_SEGMENT_ELEMS);
-        const stripe = std.mem.alignBackward(usize, @min(stripeElems, segmentElems), 8);
-        std.debug.assert(stripe >= 8);
+        const l1Stride = std.mem.alignBackward(usize, @min(l1StrideElems, segmentElems), 8);
+        std.debug.assert(l1Stride >= 8);
+        const l2Stride = std.mem.alignBackward(usize, std.math.clamp(l2StrideElems, l1Stride, segmentElems), 8);
+        const smallL1StrideThreshold = l1Stride / SMALL_L1_STRIDE_DIVISOR;
+        const smallL2StrideThreshold = @max(l2Stride / SMALL_L2_STRIDE_DIVISOR, smallL1StrideThreshold);
         return .{
             .segmentElems = segmentElems,
             .segmentShift = std.math.log2_int(usize, segmentElems),
-            .stripeElems = stripe,
-            .smallStrideThreshold = stripe / SMALL_STRIDE_STRIPE_DIVISOR,
-            .smallSegmentThreshold = segmentElems * SMALL_SEGMENT_SEGMENT_FACTOR,
+            .l1StrideElems = l1Stride,
+            .l2StrideElems = l2Stride,
+            .smallL1StrideThreshold = smallL1StrideThreshold,
+            .smallL2StrideThreshold = smallL2StrideThreshold,
+            .smallSegmentThreshold = @max(segmentElems * SMALL_SEGMENT_SEGMENT_FACTOR, smallL2StrideThreshold),
             .mediumThreshold = segmentElems * MEDIUM_SEGMENT_FACTOR,
             .preLargeThreshold = segmentElems * PRE_LARGE_SEGMENT_FACTOR,
             .presieve = presieve,
@@ -47,7 +56,7 @@ pub const Layout = struct {
     }
 
     pub fn forQuery(profile: HardwareProfile, limit: usize, presieve: PresieveKind) Layout {
-        return pinned(segmentElemsForQuery(profile, limit), profile.l1dBytes, presieve);
+        return pinned(segmentElemsForQuery(profile, limit), profile.l1dBytes, profile.l2Bytes / L2_STRIDE_L2_DIVISOR, presieve);
     }
 };
 
@@ -99,8 +108,8 @@ pub const QueryLayouts = struct {
     query: Layout,
     selfSieve: Layout,
 
-    pub fn pinned(segmentElems: usize, stripeElems: usize, presieve: PresieveKind) QueryLayouts {
-        const layout = Layout.pinned(segmentElems, stripeElems, presieve);
+    pub fn pinned(segmentElems: usize, l1StrideElems: usize, l2StrideElems: usize, presieve: PresieveKind) QueryLayouts {
+        const layout = Layout.pinned(segmentElems, l1StrideElems, l2StrideElems, presieve);
         return .{ .query = layout, .selfSieve = layout };
     }
 
@@ -115,7 +124,7 @@ pub const QueryLayouts = struct {
 pub fn layoutsForQuery(limit: usize) QueryLayouts {
     const selection = activeSelection();
     if (BuildUtils.PINNED_SEGMENT_KIB != 0) {
-        return QueryLayouts.pinned(BuildUtils.PINNED_SEGMENT_KIB * 1024, selection.profile.l1dBytes, selection.presieve);
+        return QueryLayouts.pinned(BuildUtils.PINNED_SEGMENT_KIB * 1024, selection.profile.l1dBytes, selection.profile.l2Bytes / L2_STRIDE_L2_DIVISOR, selection.presieve);
     }
     return QueryLayouts.forQuery(selection.profile, limit, selection.presieve);
 }

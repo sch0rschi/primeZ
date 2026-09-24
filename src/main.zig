@@ -13,10 +13,11 @@ fn printProfile(label: []const u8, profile: ?LayoutMod.HardwareProfile) void {
 }
 
 fn printLayout(label: []const u8, layout: LayoutMod.Layout) void {
-    std.debug.print("{s} segment = {d} KiB, stripe = {d} KiB\n", .{ label, layout.segmentElems / 1024, layout.stripeElems / 1024 });
-    std.debug.print("{s} tiers = smallStride<={d} smallSegment<={d} medium<={d} preLarge<={d} large>{d}\n", .{
+    std.debug.print("{s} segment = {d} KiB, l1Stride = {d} KiB, l2Stride = {d} KiB\n", .{ label, layout.segmentElems / 1024, layout.l1StrideElems / 1024, layout.l2StrideElems / 1024 });
+    std.debug.print("{s} tiers = smallL1Stride<={d} smallL2Stride<={d} smallSegment<={d} medium<={d} preLarge<={d} large>{d}\n", .{
         label,
-        layout.smallStrideThreshold,
+        layout.smallL1StrideThreshold,
+        layout.smallL2StrideThreshold,
         layout.smallSegmentThreshold,
         layout.mediumThreshold,
         layout.preLargeThreshold,

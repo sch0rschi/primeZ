@@ -61,7 +61,7 @@ pub const SmallSegmentSievePrimes = struct {
         const emptyRow: [WHEEL_STEP_COUNT]?[*]SievePrime = @splat(null);
         const maps: BucketCursorGrid = @splat(emptyRow);
 
-        const population: usize = @intCast(Estimates.primeCountInRangeUpperBound(layout.smallStrideThreshold, @min(maxPrime, layout.smallSegmentThreshold)));
+        const population: usize = @intCast(Estimates.primeCountInRangeUpperBound(layout.smallL2StrideThreshold, @min(maxPrime, layout.smallSegmentThreshold)));
         const bucketPool = try allocator.alignedAlloc(Bucket, BLOCK_ALIGNMENT, maxBucketsFor(population));
 
         return SmallSegmentSievePrimes{

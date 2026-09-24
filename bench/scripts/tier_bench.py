@@ -3,9 +3,10 @@
 """
 Per-sieve-tier primeZ vs. primesieve comparison.
 
-primeZ's segmented sieve classifies each sieving prime into one of 5 tiers
-(smallStride/smallSegment/medium/preLarge/large) purely by the prime's own magnitude,
-using thresholds that scale with the query's segment and stripe size (see
+primeZ's segmented sieve classifies each sieving prime into one of 6 tiers
+(smallL1Stride/smallL2Stride/smallSegment/medium/preLarge/large) purely by the prime's
+own magnitude, using thresholds that scale with the L1 stride, the L2 stride and the
+query's segment size (see
 src/lib/sieveEngine/layout.zig). The segment size is chosen per query from
 the machine's cache sizes and sqrt(limit), so the tier boundaries themselves
 depend on limit. Which tiers are "active" for a query is decided entirely by
@@ -18,10 +19,10 @@ This script:
      boundary of the layout chosen for that limit is stable, so each scenario's
      sqrt(limit) really sits at its tier's boundary under the layout primez
      will actually use.
-  2. For smallStride: uses the maximal available window (start=0,
+  2. For smallL1Stride/smallL2Stride: uses the maximal available window (start=0,
      limit=threshold^2) - sqrt(limit) can't be pushed higher without
      leaving the tier, so the window (and thus runtime) is structurally
-     capped. It almost never reaches --target-seconds; that's expected,
+     capped. They rarely reach --target-seconds; that's expected,
      not a bug - see the tier-bench SKILL.md for why.
   3. For smallSegment/medium/preLarge/large: fixes limit = tier's own upper sqrt bound
      squared (large uses --large-multiplier x its lower bound instead,
@@ -34,7 +35,7 @@ This script:
 Usage:
   python3 bench/scripts/tier_bench.py [--target-seconds 10] [--tolerance 0.05]
       [--primez zig-out/bin/primez] [--primesieve bench/primesieve/build/primesieve]
-      [--large-multiplier 10] [--only smallStride,smallSegment,medium,preLarge,large]
+      [--large-multiplier 10] [--only smallL1Stride,smallL2Stride,smallSegment,medium,preLarge,large]
 
 Run from the repo root (relative default paths assume that).
 """
@@ -48,8 +49,8 @@ import sys
 
 SECONDS_RE = re.compile(r"Seconds:\s*([0-9.]+)")
 PRIMES_RE = re.compile(r"Primes:\s*([0-9]+)")
-SEGMENT_RE = re.compile(r"Query segment = (\d+) KiB, stripe = (\d+) KiB")
-TIERS_RE = re.compile(r"Query tiers = smallStride<=(\d+) smallSegment<=(\d+) medium<=(\d+) preLarge<=(\d+)")
+SEGMENT_RE = re.compile(r"Query segment = (\d+) KiB, l1Stride = (\d+) KiB, l2Stride = (\d+) KiB")
+TIERS_RE = re.compile(r"Query tiers = smallL1Stride<=(\d+) smallL2Stride<=(\d+) smallSegment<=(\d+) medium<=(\d+) preLarge<=(\d+)")
 
 
 def run(argv: list[str]) -> str:
@@ -65,11 +66,13 @@ def layout_for(primez_bin: str, limit: int) -> dict[str, int]:
     tiers = TIERS_RE.search(out)
     return {
         "seg_kib": int(seg.group(1)),
-        "stripe_kib": int(seg.group(2)),
-        "small_stride": int(tiers.group(1)),
-        "small_segment": int(tiers.group(2)),
-        "medium": int(tiers.group(3)),
-        "pre_large": int(tiers.group(4)),
+        "l1_stride_kib": int(seg.group(2)),
+        "l2_stride_kib": int(seg.group(3)),
+        "small_l1_stride": int(tiers.group(1)),
+        "small_l2_stride": int(tiers.group(2)),
+        "small_segment": int(tiers.group(3)),
+        "medium": int(tiers.group(4)),
+        "pre_large": int(tiers.group(5)),
     }
 
 
@@ -131,7 +134,7 @@ def main() -> int:
     ap.add_argument("--primesieve", default="bench/primesieve/build/primesieve")
     ap.add_argument("--large-multiplier", type=float, default=10.0,
                      help="sqrt(limit) for the large scenario = this x the preLarge/large boundary")
-    ap.add_argument("--only", default=None, help="comma-separated subset of smallStride,smallSegment,medium,preLarge,large")
+    ap.add_argument("--only", default=None, help="comma-separated subset of smallL1Stride,smallL2Stride,smallSegment,medium,preLarge,large")
     args = ap.parse_args()
 
     only = {s.strip() for s in args.only.split(",")} if args.only else None
@@ -140,7 +143,7 @@ def main() -> int:
 
     tiers: list[dict] = []
 
-    for name, key in [("smallStride", "small_stride")]:
+    for name, key in [("smallL1Stride", "small_l1_stride"), ("smallL2Stride", "small_l2_stride")]:
         if only and name not in only:
             continue
         limit, layout = limit_at_boundary(args.primez, key)
@@ -157,7 +160,8 @@ def main() -> int:
     for t in tiers:
         l = layout_for(args.primez, t["limit"])
         print(
-            f"# {t['name']}: segment={l['seg_kib']}KiB stripe={l['stripe_kib']}KiB tiers: smallStride<={l['small_stride']} "
+            f"# {t['name']}: segment={l['seg_kib']}KiB l1Stride={l['l1_stride_kib']}KiB l2Stride={l['l2_stride_kib']}KiB "
+            f"tiers: smallL1Stride<={l['small_l1_stride']} smallL2Stride<={l['small_l2_stride']} "
             f"smallSegment<={l['small_segment']} medium<={l['medium']} preLarge<={l['pre_large']}",
             file=sys.stderr,
         )

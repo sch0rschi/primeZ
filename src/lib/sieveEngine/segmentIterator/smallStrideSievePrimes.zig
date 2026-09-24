@@ -2,7 +2,6 @@ const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
 const LayoutMod = @import("../layout.zig");
-const Layout = LayoutMod.Layout;
 const Estimates = @import("../../estimates.zig");
 
 const SievePrimeMod = @import("sievePrime.zig");
@@ -97,10 +96,10 @@ pub const SmallStrideSievePrimes = struct {
     active: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(CompactSievePrime),
 
     segmentElems: usize,
-    stripeElems: usize,
+    strideElems: usize,
 
-    pub fn init(allocator: std.mem.Allocator, layout: Layout, maxPrime: usize) !SmallStrideSievePrimes {
-        const capacity = Estimates.primeCountUpperBound(@min(maxPrime, layout.smallStrideThreshold));
+    pub fn init(allocator: std.mem.Allocator, segmentElems: usize, strideElems: usize, minPrimeExclusive: usize, maxPrime: usize) !SmallStrideSievePrimes {
+        const capacity: usize = @intCast(Estimates.primeCountInRangeUpperBound(minPrimeExclusive, maxPrime));
         var pending: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(SievePrime) = undefined;
         var active: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(CompactSievePrime) = undefined;
         for (&pending, &active) |*p, *a| {
@@ -112,8 +111,8 @@ pub const SmallStrideSievePrimes = struct {
             .pending = pending,
             .pendingStart = @splat(0),
             .active = active,
-            .segmentElems = layout.segmentElems,
-            .stripeElems = layout.stripeElems,
+            .segmentElems = segmentElems,
+            .strideElems = strideElems,
         };
     }
 
@@ -168,14 +167,14 @@ pub const SmallStrideSievePrimes = struct {
         bucketsStart: usize,
         bucketsEndExclusive: usize,
     ) void {
-        var stripeEnd = bucketsStart;
-        while (stripeEnd < bucketsEndExclusive) {
-            stripeEnd = @min(stripeEnd + self.stripeElems, bucketsEndExclusive);
+        var strideEnd = bucketsStart;
+        while (strideEnd < bucketsEndExclusive) {
+            strideEnd = @min(strideEnd + self.strideElems, bucketsEndExclusive);
 
             inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
                 for (self.active[ari].items) |*entry| {
-                    if (bucketsStart + entry.localOffset < stripeEnd) {
-                        applyCompactSievePrimeIntoSegment(ari, buckets, bucketsStart, stripeEnd, self.segmentElems, entry);
+                    if (bucketsStart + entry.localOffset < strideEnd) {
+                        applyCompactSievePrimeIntoSegment(ari, buckets, bucketsStart, strideEnd, self.segmentElems, entry);
                     }
                 }
             }
