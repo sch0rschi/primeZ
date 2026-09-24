@@ -17,10 +17,10 @@ const BuildProfile = struct {
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.option(
-        std.builtin.OptimizeMode,
+        std.lang.Optimize,
         "optimize",
-        "Prioritize performance, safety, or binary size (default: ReleaseFast).",
-    ) orelse .ReleaseFast;
+        "Prioritize performance, safety, or binary size (default: fast).",
+    ) orelse .fast;
 
     const profile = resolveBuildProfile(b, target);
 
@@ -50,7 +50,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("buildUtils/genPreSievePatternsTool.zig"),
             .target = b.graph.host,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
         }),
     });
     const presieve_patterns = PresievePatterns{
@@ -76,7 +76,7 @@ pub fn build(b: *std.Build) void {
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/lib/tests.zig"),
         .target = b.graph.host,
-        .optimize = .Debug,
+        .optimize = .debug,
     });
     test_mod.addOptions("primeZConfig", options);
     wireBuildUtils(b, test_mod, options, presieve_patterns);
@@ -119,7 +119,9 @@ fn resolveBuildProfile(b: *std.Build, target: std.Build.ResolvedTarget) BuildPro
         .l2Bytes = CacheInfo.FALLBACK.l2Bytes / 1024,
         .l3Bytes = CacheInfo.FALLBACK.l3Bytes / 1024,
     };
-    const detectedKiB: ?CacheInfo.HardwareProfile = if (target.query.isNative() and (l1 == null or l2 == null or l3 == null))
+    const needsDetection = target.query.isNative() and (l1 == null or l2 == null or l3 == null);
+    if (needsDetection) b.graph.poisonCache();
+    const detectedKiB: ?CacheInfo.HardwareProfile = if (needsDetection)
         if (CacheInfo.detect()) |hw| .{ .l1dBytes = hw.l1dBytes / 1024, .l2Bytes = hw.l2Bytes / 1024, .l3Bytes = hw.l3Bytes / 1024 } else null
     else
         null;
@@ -174,13 +176,7 @@ fn solvePresieveGroups(b: *std.Build, profile: BuildProfile) ?std.Build.LazyPath
 
     if (profile.l1dKiB == PresieveGroups.FALLBACK_L1D_KIB and profile.vecLen == PresieveGroups.FALLBACK_VEC_LEN) return null;
 
-    const hasTool = struct {
-        fn f(builder: *std.Build, name: []const u8) bool {
-            _ = builder.findProgram(&.{name}, &.{}) catch return false;
-            return true;
-        }
-    }.f;
-    if (b.graph.host.result.os.tag == .windows or !hasTool(b, "python3") or !hasTool(b, "make")) {
+    if (b.graph.host.result.os.tag == .windows or b.findProgram(.{ .names = &.{"python3"} }) == null or b.findProgram(.{ .names = &.{"make"} }) == null) {
         std.debug.print("warning: python3 or make not available; only the fallback presieve is built in. Pass -Dpresieve_solver=false to silence this.\n", .{});
         return null;
     }

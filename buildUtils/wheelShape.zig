@@ -23,7 +23,7 @@ fn computeResidueClassCount() usize {
 }
 
 fn computeResidueClassIndex() [CIRCUMFERENCE]?usize {
-    var index = [_]?usize{null} ** CIRCUMFERENCE;
+    var index: [CIRCUMFERENCE]?usize = @splat(null);
     var position: usize = 0;
     for (0..CIRCUMFERENCE) |r| {
         for (PRIMES) |p| {

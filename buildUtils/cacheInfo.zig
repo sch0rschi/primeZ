@@ -59,7 +59,7 @@ fn detectLinux() ?HardwareProfile {
 
 fn readSysfsCacheField(pathBuffer: *[128]u8, valueBuffer: *[64]u8, cpu: usize, index: usize, field: []const u8) ?[]const u8 {
     const linux = std.os.linux;
-    const path = std.fmt.bufPrintZ(pathBuffer, "/sys/devices/system/cpu/cpu{d}/cache/index{d}/{s}", .{ cpu, index, field }) catch return null;
+    const path = std.mem.printSentinel(pathBuffer, "/sys/devices/system/cpu/cpu{d}/cache/index{d}/{s}", .{ cpu, index, field }, 0) catch return null;
     const openResult = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
     if (linux.errno(openResult) != .SUCCESS) return null;
     const fd: i32 = @intCast(openResult);

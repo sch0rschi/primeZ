@@ -110,7 +110,7 @@ pub const SmallStrideSievePrimes = struct {
 
         return SmallStrideSievePrimes{
             .pending = pending,
-            .pendingStart = .{0} ** Comptimes.ADMISSIBLE_RESIDUES.count,
+            .pendingStart = @splat(0),
             .active = active,
             .segmentElems = layout.segmentElems,
             .stripeElems = layout.stripeElems,

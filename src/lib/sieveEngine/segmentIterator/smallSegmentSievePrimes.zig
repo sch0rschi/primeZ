@@ -58,8 +58,8 @@ pub const SmallSegmentSievePrimes = struct {
     bucketNextUnclaimed: usize,
 
     pub fn init(allocator: std.mem.Allocator, layout: Layout, maxPrime: usize) !SmallSegmentSievePrimes {
-        const emptyRow = [_]?[*]SievePrime{null} ** WHEEL_STEP_COUNT;
-        const maps: BucketCursorGrid = [_][WHEEL_STEP_COUNT]?[*]SievePrime{emptyRow} ** RESIDUE_COUNT;
+        const emptyRow: [WHEEL_STEP_COUNT]?[*]SievePrime = @splat(null);
+        const maps: BucketCursorGrid = @splat(emptyRow);
 
         const population: usize = @intCast(Estimates.primeCountInRangeUpperBound(layout.smallStrideThreshold, @min(maxPrime, layout.smallSegmentThreshold)));
         const bucketPool = try allocator.alignedAlloc(Bucket, BLOCK_ALIGNMENT, maxBucketsFor(population));

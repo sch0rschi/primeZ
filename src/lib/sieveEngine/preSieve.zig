@@ -76,7 +76,7 @@ pub fn PreSieve(comptime GROUPS: []const []const usize, comptime BLOB: []const u
 
         fn computeOverrideBuckets() [OVERRIDE_BUCKET_COUNT]Types.SIEVE_BUCKET_TYPE {
             @setEvalBranchQuota(1 << 20);
-            var buckets = [_]Types.SIEVE_BUCKET_TYPE{0} ** OVERRIDE_BUCKET_COUNT;
+            var buckets: [OVERRIDE_BUCKET_COUNT]Types.SIEVE_BUCKET_TYPE = @splat(0);
             var pp: usize = 1;
             while (pp < OVERRIDE_BUCKET_COUNT * Comptimes.WHEEL_CIRCUMFERENCE) : (pp += 1) {
                 const mod = pp % Comptimes.WHEEL_CIRCUMFERENCE;

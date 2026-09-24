@@ -2,7 +2,7 @@
     .name = .primeZ,
     .version = "0.0.0",
     .fingerprint = 0xace7d83f4d1f9b47,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0-dev.2267+48abf1a34",
 
     .dependencies = .{},
 

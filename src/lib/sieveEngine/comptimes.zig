@@ -53,7 +53,7 @@ pub const WHEEL_PATTERNS_2310: [ADMISSIBLE_RESIDUES.count * WHEEL_2310_PHASE_COU
 
 fn buildAdmissibleResidues() AdmissibleResidues {
     var position: usize = 0;
-    var admissibleCheck: [WHEEL_CIRCUMFERENCE]bool = [_]bool{false} ** WHEEL_CIRCUMFERENCE;
+    var admissibleCheck: [WHEEL_CIRCUMFERENCE]bool = @splat(false);
     var admissibleList: [ADMISSIBLE_RESIDUES_COUNT]usize = undefined;
     var reverseMap: [WHEEL_CIRCUMFERENCE]usize = undefined;
 
@@ -118,7 +118,7 @@ fn computeAdmissibleResidueCount2310() comptime_int {
 fn buildAdmissibleResidues2310() AdmissibleResidues2310 {
     @setEvalBranchQuota(100_000);
     var position: usize = 0;
-    var admissibleCheck: [WHEEL_CIRCUMFERENCE_2310]bool = [_]bool{false} ** WHEEL_CIRCUMFERENCE_2310;
+    var admissibleCheck: [WHEEL_CIRCUMFERENCE_2310]bool = @splat(false);
     var admissibleList: [ADMISSIBLE_RESIDUES_2310_COUNT]usize = undefined;
     var reverseMap: [WHEEL_CIRCUMFERENCE_2310]usize = undefined;
 

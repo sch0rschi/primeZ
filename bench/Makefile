@@ -1,4 +1,5 @@
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
+ZIG ?= zig
 REPEATS ?= 1
 ONLY ?=
 
@@ -38,7 +39,8 @@ help:
 	@echo "  make clean    remove build outputs"
 	@echo "  make distclean also remove the primesieve build tree"
 	@echo ""
-	@echo "  vars: REPEATS=$(REPEATS) (best-of-N per scenario) ONLY=$(ONLY) (comma-separated scenario names)"
+	@echo "  vars: ZIG=$(ZIG) (zig >= 0.17 binary used to build primez)"
+	@echo "        REPEATS=$(REPEATS) (best-of-N per scenario) ONLY=$(ONLY) (comma-separated scenario names)"
 	@echo "        SMALL_START=$(SMALL_START) SMALL_LIMIT=$(SMALL_LIMIT)"
 	@echo "        BIG_START=$(BIG_START) BIG_LIMIT=$(BIG_LIMIT)"
 	@echo "        HIGH_START=$(HIGH_START) HIGH_LIMIT=$(HIGH_LIMIT)"
@@ -55,8 +57,9 @@ primesieve-build:
 	cmake --build $(PRIMESIEVE_BUILD) -j$(JOBS)
 
 primez-build:
+	@$(ZIG) version | awk -F. '{ if ($$1 == 0 && $$2 < 17) { print "error: $(ZIG) is zig " $$0 ", primeZ needs zig >= 0.17 - pass ZIG=/path/to/zig-0.17/zig"; exit 1 } }'
 	rm -rf $(ROOT)/zig-out $(ROOT)/.zig-cache
-	cd $(ROOT) && zig build -Dcpu=native
+	cd $(ROOT) && $(ZIG) build -Dcpu=native
 
 bench: primez-build primesieve-build
 	@python3 $(SCRIPTS)/compare.py $(PRIMEZ_BIN) $(PRIMESIEVE_BIN) --repeats $(REPEATS) $(ONLY_ARGS) $(SCENARIO_ARGS)
