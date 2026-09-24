@@ -36,7 +36,8 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
 
-    var argIter = init.minimal.args.iterate();
+    var argIter = try init.minimal.args.iterateAllocator(allocator);
+    defer argIter.deinit();
     _ = argIter.next();
 
     var printOnly = false;
