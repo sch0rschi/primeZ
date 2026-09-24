@@ -11,13 +11,21 @@ const RingEntry = SievePrimeMod.LargeSievePrimeSlot;
 const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
 const PRE_LARGE_THRESHOLD: usize = BuildUtils.PRE_LARGE_THRESHOLD;
 
+const WHEEL_INDEX_SHIFT = Comptimes.WHEEL_2310_INDEX_SHIFT;
+const LOCAL_OFFSET_MASK: u32 = (1 << WHEEL_INDEX_SHIFT) - 1;
+const IN_BUCKET_INDEX_BITS = 3;
+const IN_BUCKET_INDEX_MASK: u32 = (1 << IN_BUCKET_INDEX_BITS) - 1;
+
 comptime {
-    if (SEGMENT_ELEMS > 1 << 23) @compileError("SEGMENT_ELEMS exceeds RingEntry.localOffset's u23 budget - widen that field before raising this bound");
+    if (SEGMENT_ELEMS > 1 << WHEEL_INDEX_SHIFT) @compileError("SEGMENT_ELEMS exceeds RingEntry's local-offset bit budget - raise WHEEL_2310_INDEX_SHIFT before raising this bound");
+    if (Comptimes.ADMISSIBLE_RESIDUES_2310.count > 1 << (32 - WHEEL_INDEX_SHIFT)) @compileError("ADMISSIBLE_RESIDUES_2310 does not fit RingEntry's wheel-step bit budget");
+    if (Comptimes.ADMISSIBLE_RESIDUES.count != 1 << IN_BUCKET_INDEX_BITS) @compileError("RingEntry packs the in-bucket index into IN_BUCKET_INDEX_BITS bits");
 }
 
 const MAX_WHEEL_STEP_FACTOR: usize = blk: {
+    @setEvalBranchQuota(100_000);
     var m: usize = 0;
-    for (Comptimes.WHEEL_PATTERNS_210) |step| {
+    for (Comptimes.WHEEL_PATTERNS_2310) |step| {
         m = @max(m, @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend));
     }
     break :blk m;
@@ -72,14 +80,14 @@ fn populationBoundFor(maxPrime: usize) usize {
 }
 
 fn maxBlocksFor(population: usize, ringLen: usize) usize {
-    return ringLen + (population + BLOCK_LEN - 1) / BLOCK_LEN + 1;
+    return ringLen + (population + BLOCK_LEN - 1) / BLOCK_LEN + 2;
 }
 
 pub const LargeSievePrimes = struct {
     list: std.ArrayList(SievePrime),
     pendingStart: usize,
 
-    ringWritePos: []?[*]RingEntry,
+    ringWritePos: [][*]RingEntry,
 
     freeBlocks: ?*Block,
 
@@ -88,14 +96,13 @@ pub const LargeSievePrimes = struct {
 
     pub fn init(allocator: std.mem.Allocator, maxPrime: usize) !LargeSievePrimes {
         const ringLen = tightMinRingLen(maxPrime);
-        const ringWritePos = try allocator.alloc(?[*]RingEntry, ringLen);
-        @memset(ringWritePos, null);
+        const ringWritePos = try allocator.alloc([*]RingEntry, ringLen);
 
         const population = populationBoundFor(maxPrime);
         const blockCount = maxBlocksFor(population, ringLen);
         const blockPool = try allocator.alignedAlloc(Block, BLOCK_ALIGNMENT, blockCount);
 
-        return LargeSievePrimes{
+        var self = LargeSievePrimes{
             .list = try std.ArrayList(SievePrime).initCapacity(allocator, population),
             .pendingStart = 0,
             .ringWritePos = ringWritePos,
@@ -103,6 +110,8 @@ pub const LargeSievePrimes = struct {
             .blockPool = blockPool,
             .nextUnclaimed = 0,
         };
+        for (ringWritePos) |*wp| wp.* = self.addBlock(null);
+        return self;
     }
 
     pub fn deinit(self: *LargeSievePrimes, allocator: std.mem.Allocator) void {
@@ -116,7 +125,7 @@ pub const LargeSievePrimes = struct {
         self.freeBlocks = b;
     }
 
-    fn addBlock(self: *LargeSievePrimes, sealedWritePos: ?[*]RingEntry) [*]RingEntry {
+    noinline fn addBlock(self: *LargeSievePrimes, sealedWritePos: ?[*]RingEntry) [*]RingEntry {
         const fresh = if (self.freeBlocks) |fb| blk: {
             self.freeBlocks = fb.next;
             break :blk fb;
@@ -136,19 +145,19 @@ pub const LargeSievePrimes = struct {
         return fresh.items();
     }
 
-    fn storeSievingPrime(self: *LargeSievePrimes, ringWritePos: []?[*]RingEntry, slot: usize, entry: *const RingEntry) void {
-        const wp = ringWritePos[slot] orelse self.addBlock(null);
+    inline fn storeSievingPrime(self: *LargeSievePrimes, ringWritePos: [][*]RingEntry, slot: usize, entry: *const RingEntry) void {
+        const wp = ringWritePos[slot];
         wp[0] = entry.*;
         const next = wp + 1;
         ringWritePos[slot] = if (isFull(next)) self.addBlock(next) else next;
     }
 
-    fn toRingEntry(sievePrime: SievePrime, bucketsStart: usize, segmentsAhead: usize) RingEntry {
+    pub fn toRingEntry(sievePrime: SievePrime, bucketsStart: usize, segmentsAhead: usize) RingEntry {
         const localOffset = sievePrime.currentBucketIndex - bucketsStart - segmentsAhead * SEGMENT_ELEMS;
+        std.debug.assert(sievePrime.initialBucketIndex < 1 << (32 - IN_BUCKET_INDEX_BITS));
         return RingEntry{
-            .localOffset = @intCast(localOffset),
-            .initialBucketIndex = sievePrime.initialBucketIndex,
-            .wheelIndex210 = @as(u9, sievePrime.initialInBucketIndex) * Comptimes.ADMISSIBLE_RESIDUES_210.count + @as(u9, sievePrime.wheelStepIndex210),
+            .localOffsetAndWheelStepIndex2310 = @as(u32, @intCast(localOffset)) | (@as(u32, sievePrime.wheelStepIndex2310) << WHEEL_INDEX_SHIFT),
+            .initialBucketIndexAndInBucketIndex = (sievePrime.initialBucketIndex << IN_BUCKET_INDEX_BITS) | sievePrime.initialInBucketIndex,
         };
     }
 
@@ -196,58 +205,48 @@ pub const LargeSievePrimes = struct {
         const ringWritePos = self.ringWritePos;
         const ringLen = ringWritePos.len;
 
-        if (ringWritePos[0]) |wp| {
-            const headBlock = blockOf(wp);
-            headBlock.end = wp;
+        const wp = ringWritePos[0];
+        const headBlock = blockOf(wp);
+        headBlock.end = wp;
 
-            var block: ?*Block = headBlock;
-            while (block) |b| {
-                const items = b.items();
-                const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(RingEntry);
+        var block: ?*Block = headBlock;
+        while (block) |b| {
+            const items = b.items();
+            const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(RingEntry);
 
-                var i: usize = 0;
-                while (i + 1 < fill) : (i += 2) {
-                    const result0 = processOne(buckets, items[i]);
-                    const result1 = processOne(buckets, items[i + 1]);
-                    std.debug.assert(result0.segmentsAhead >= 1 and result0.segmentsAhead < ringLen);
-                    std.debug.assert(result1.segmentsAhead >= 1 and result1.segmentsAhead < ringLen);
-                    self.storeSievingPrime(ringWritePos, result0.segmentsAhead, &result0.entry);
-                    self.storeSievingPrime(ringWritePos, result1.segmentsAhead, &result1.entry);
-                }
-                if (i < fill) {
-                    const result = processOne(buckets, items[i]);
-                    std.debug.assert(result.segmentsAhead >= 1 and result.segmentsAhead < ringLen);
-                    self.storeSievingPrime(ringWritePos, result.segmentsAhead, &result.entry);
-                }
-
-                const next = b.next;
-                self.freeBlock(b);
-                block = next;
+            for (items[0..fill]) |entry| {
+                const result = processOne(buckets, entry);
+                std.debug.assert(result.segmentsAhead >= 1 and result.segmentsAhead < ringLen);
+                self.storeSievingPrime(ringWritePos, result.segmentsAhead, &result.entry);
             }
-            ringWritePos[0] = null;
+
+            const next = b.next;
+            self.freeBlock(b);
+            block = next;
         }
 
-        std.mem.copyForwards(?[*]RingEntry, ringWritePos[0 .. ringLen - 1], ringWritePos[1..ringLen]);
-        ringWritePos[ringLen - 1] = null;
+        std.mem.copyForwards([*]RingEntry, ringWritePos[0 .. ringLen - 1], ringWritePos[1..ringLen]);
+        ringWritePos[ringLen - 1] = self.addBlock(null);
     }
 };
 
-inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: RingEntry) struct { entry: RingEntry, segmentsAhead: usize } {
-    const step = Comptimes.WHEEL_PATTERNS_210[entry.wheelIndex210];
+pub inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: RingEntry) struct { entry: RingEntry, segmentsAhead: usize } {
+    const wheelStepIndex = entry.localOffsetAndWheelStepIndex2310 >> WHEEL_INDEX_SHIFT;
+    const inBucketIndex = entry.initialBucketIndexAndInBucketIndex & IN_BUCKET_INDEX_MASK;
+    const step = &Comptimes.WHEEL_PATTERNS_2310[(wheelStepIndex << IN_BUCKET_INDEX_BITS) | inBucketIndex];
 
-    const localOffset: usize = entry.localOffset;
+    const localOffset: usize = entry.localOffsetAndWheelStepIndex2310 & LOCAL_OFFSET_MASK;
     buckets[localOffset] &= step.bitMask;
 
-    const initialBucketIndex = @as(usize, entry.initialBucketIndex);
+    const initialBucketIndex = @as(usize, entry.initialBucketIndexAndInBucketIndex >> IN_BUCKET_INDEX_BITS);
     const advance = initialBucketIndex * @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend);
     const newOffset = localOffset + advance;
     const segmentsAhead = newOffset / SEGMENT_ELEMS;
 
     return .{
         .entry = RingEntry{
-            .localOffset = @intCast(newOffset % SEGMENT_ELEMS),
-            .initialBucketIndex = entry.initialBucketIndex,
-            .wheelIndex210 = @intCast(step.nextWheelIndex210),
+            .localOffsetAndWheelStepIndex2310 = @as(u32, @intCast(newOffset % SEGMENT_ELEMS)) | step.nextWheelStepIndex2310Bits,
+            .initialBucketIndexAndInBucketIndex = entry.initialBucketIndexAndInBucketIndex,
         },
         .segmentsAhead = segmentsAhead,
     };

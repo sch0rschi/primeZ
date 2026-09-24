@@ -44,21 +44,21 @@ pub fn firstAdmissibleMultiple(prime: usize, minRawNumberInclusive: usize) Admis
     };
 }
 
-pub const AdmissibleMultiple210 = struct {
+pub const AdmissibleMultiple2310 = struct {
     bucketIndex: usize,
-    wheelStepIndex210: u6,
+    wheelStepIndex2310: u9,
 };
 
-pub fn firstAdmissibleMultiple210(prime: usize, minRawNumberInclusive: usize) AdmissibleMultiple210 {
+pub fn firstAdmissibleMultiple2310(prime: usize, minRawNumberInclusive: usize) AdmissibleMultiple2310 {
     const k0 = if (minRawNumberInclusive == 0) prime else @max(prime, Utils.divCeil(minRawNumberInclusive, prime));
-    const r = k0 % Comptimes.WHEEL_CIRCUMFERENCE_210;
-    const wheelStepIndex210 = Comptimes.ADMISSIBLE_RESIDUES_210.reverseMap[r];
-    const k = k0 + (Comptimes.ADMISSIBLE_RESIDUES_210.list[wheelStepIndex210] - r);
+    const r = k0 % Comptimes.WHEEL_CIRCUMFERENCE_2310;
+    const wheelStepIndex2310 = Comptimes.ADMISSIBLE_RESIDUES_2310.reverseMap[r];
+    const k = k0 + (Comptimes.ADMISSIBLE_RESIDUES_2310.list[wheelStepIndex2310] - r);
 
     const multiple = prime * k;
     return .{
         .bucketIndex = multiple / Comptimes.WHEEL_CIRCUMFERENCE,
-        .wheelStepIndex210 = @intCast(wheelStepIndex210),
+        .wheelStepIndex2310 = @intCast(wheelStepIndex2310),
     };
 }
 
@@ -66,29 +66,21 @@ pub const LargeSievePrime = packed struct {
     currentBucketIndex: usize,
     initialBucketIndex: u32,
     initialInBucketIndex: u3,
-    wheelStepIndex210: u6,
+    wheelStepIndex2310: u9,
 
-    pub fn fromTarget210(target: AdmissibleMultiple210, bucketIndex: usize, inBucketIndex: u3) LargeSievePrime {
+    pub fn fromTarget2310(target: AdmissibleMultiple2310, bucketIndex: usize, inBucketIndex: u3) LargeSievePrime {
         return LargeSievePrime{
             .currentBucketIndex = target.bucketIndex,
             .initialBucketIndex = @intCast(bucketIndex),
             .initialInBucketIndex = inBucketIndex,
-            .wheelStepIndex210 = target.wheelStepIndex210,
+            .wheelStepIndex2310 = target.wheelStepIndex2310,
         };
     }
 };
 
-pub const LargeSievePrimeSlot = packed struct {
-    localOffset: u23,
-    wheelIndex210: u9,
-    initialBucketIndex: u32,
-};
-
-pub const PreLargeRingEntry = packed struct {
-    localOffset: u23,
-    initialBucketIndex: u32,
-    initialInBucketIndex: u3,
-    wheelStepIndex: u3,
+pub const LargeSievePrimeSlot = extern struct {
+    localOffsetAndWheelStepIndex2310: u32,
+    initialBucketIndexAndInBucketIndex: u32,
 };
 
 pub const MediumBucketSievePrime = struct {

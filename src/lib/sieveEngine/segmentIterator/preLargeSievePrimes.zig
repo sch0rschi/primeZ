@@ -1,13 +1,15 @@
 const std = @import("std");
 const Types = @import("../types.zig");
-const Comptimes = @import("../comptimes.zig");
 const BuildUtils = @import("buildUtils");
 
 const SievePrimeMod = @import("sievePrime.zig");
-const SievePrime = SievePrimeMod.SievePrime;
-const RingEntry = SievePrimeMod.PreLargeRingEntry;
+const SievePrime = SievePrimeMod.LargeSievePrime;
+const RingEntry = SievePrimeMod.LargeSievePrimeSlot;
 
-const ringSizeFor = @import("largeSievePrimes.zig").ringSizeFor;
+const LargeSievePrimesMod = @import("largeSievePrimes.zig");
+const ringSizeFor = LargeSievePrimesMod.ringSizeFor;
+const toRingEntry = LargeSievePrimesMod.LargeSievePrimes.toRingEntry;
+const processOne = LargeSievePrimesMod.processOne;
 
 const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
 const PRE_LARGE_THRESHOLD: usize = BuildUtils.PRE_LARGE_THRESHOLD;
@@ -51,14 +53,14 @@ const TOTAL_POPULATION: usize = blk: {
 };
 
 fn maxBlocksFor(population: usize, ringLen: usize) usize {
-    return ringLen + (population + BLOCK_LEN - 1) / BLOCK_LEN + 1;
+    return ringLen + (population + BLOCK_LEN - 1) / BLOCK_LEN + 2;
 }
 
 pub const PreLargeSievePrimes = struct {
     list: std.ArrayList(SievePrime),
     pendingStart: usize,
 
-    ringWritePos: []?[*]RingEntry,
+    ringWritePos: [][*]RingEntry,
     ringHead: usize,
 
     freeBlocks: ?*Block,
@@ -67,13 +69,12 @@ pub const PreLargeSievePrimes = struct {
 
     pub fn init(allocator: std.mem.Allocator) !PreLargeSievePrimes {
         const ringLen = ringSizeFor(PRE_LARGE_THRESHOLD);
-        const ringWritePos = try allocator.alloc(?[*]RingEntry, ringLen);
-        @memset(ringWritePos, null);
+        const ringWritePos = try allocator.alloc([*]RingEntry, ringLen);
 
         const blockCount = maxBlocksFor(TOTAL_POPULATION, ringLen);
         const blockPool = try allocator.alignedAlloc(Block, BLOCK_ALIGNMENT, blockCount);
 
-        return PreLargeSievePrimes{
+        var self = PreLargeSievePrimes{
             .list = try std.ArrayList(SievePrime).initCapacity(allocator, TOTAL_POPULATION),
             .pendingStart = 0,
             .ringWritePos = ringWritePos,
@@ -82,6 +83,8 @@ pub const PreLargeSievePrimes = struct {
             .blockPool = blockPool,
             .nextUnclaimed = 0,
         };
+        for (ringWritePos) |*wp| wp.* = self.addBlock(null);
+        return self;
     }
 
     pub fn deinit(self: *PreLargeSievePrimes, allocator: std.mem.Allocator) void {
@@ -95,7 +98,7 @@ pub const PreLargeSievePrimes = struct {
         self.freeBlocks = b;
     }
 
-    fn addBlock(self: *PreLargeSievePrimes, sealedWritePos: ?[*]RingEntry) [*]RingEntry {
+    noinline fn addBlock(self: *PreLargeSievePrimes, sealedWritePos: ?[*]RingEntry) [*]RingEntry {
         const fresh = if (self.freeBlocks) |fb| blk: {
             self.freeBlocks = fb.next;
             break :blk fb;
@@ -115,21 +118,11 @@ pub const PreLargeSievePrimes = struct {
         return fresh.items();
     }
 
-    fn storeSievingPrime(self: *PreLargeSievePrimes, ringWritePos: []?[*]RingEntry, slot: usize, entry: *const RingEntry) void {
-        const wp = ringWritePos[slot] orelse self.addBlock(null);
+    inline fn storeSievingPrime(self: *PreLargeSievePrimes, ringWritePos: [][*]RingEntry, slot: usize, entry: *const RingEntry) void {
+        const wp = ringWritePos[slot];
         wp[0] = entry.*;
         const next = wp + 1;
         ringWritePos[slot] = if (isFull(next)) self.addBlock(next) else next;
-    }
-
-    fn toRingEntry(sievePrime: SievePrime, bucketsStart: usize, segmentsAhead: usize) RingEntry {
-        const localOffset = sievePrime.currentBucketIndex - bucketsStart - segmentsAhead * SEGMENT_ELEMS;
-        return RingEntry{
-            .localOffset = @intCast(localOffset),
-            .initialBucketIndex = sievePrime.initialBucketIndex,
-            .initialInBucketIndex = sievePrime.initialInBucketIndex,
-            .wheelStepIndex = sievePrime.wheelStepIndex,
-        };
     }
 
     pub fn add(self: *PreLargeSievePrimes, sievePrime: SievePrime, bucketsStart: usize) void {
@@ -179,58 +172,29 @@ pub const PreLargeSievePrimes = struct {
         const ringLen = ringWritePos.len;
         const cursor = self.ringHead;
 
-        if (ringWritePos[cursor]) |wp| {
-            const headBlock = blockOf(wp);
-            headBlock.end = wp;
-            ringWritePos[cursor] = null;
+        const wp = ringWritePos[cursor];
+        const headBlock = blockOf(wp);
+        headBlock.end = wp;
 
-            var block: ?*Block = headBlock;
-            while (block) |b| {
-                const items = b.items();
-                const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(RingEntry);
+        var block: ?*Block = headBlock;
+        while (block) |b| {
+            const items = b.items();
+            const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(RingEntry);
 
-                for (items[0..fill]) |*entry| {
-                    const result1 = processOne(buckets, entry.*);
-                    const final = if (result1.segmentsAhead == 0) blk: {
-                        const result2 = processOne(buckets, result1.entry);
-                        std.debug.assert(result2.segmentsAhead >= 1);
-                        break :blk result2;
-                    } else result1;
-                    std.debug.assert(final.segmentsAhead >= 1 and final.segmentsAhead < ringLen);
-                    const slot = (cursor + final.segmentsAhead) & (ringLen - 1);
-                    self.storeSievingPrime(ringWritePos, slot, &final.entry);
-                }
-
-                const next = b.next;
-                self.freeBlock(b);
-                block = next;
+            for (items[0..fill]) |entry| {
+                var result = processOne(buckets, entry);
+                while (result.segmentsAhead == 0) result = processOne(buckets, result.entry);
+                std.debug.assert(result.segmentsAhead < ringLen);
+                const slot = (cursor + result.segmentsAhead) & (ringLen - 1);
+                self.storeSievingPrime(ringWritePos, slot, &result.entry);
             }
+
+            const next = b.next;
+            self.freeBlock(b);
+            block = next;
         }
 
+        ringWritePos[cursor] = self.addBlock(null);
         self.ringHead = (cursor + 1) & (ringLen - 1);
     }
 };
-
-inline fn processOne(buckets: Types.SIEVE_BUCKETS_TYPE, entry: RingEntry) struct { entry: RingEntry, segmentsAhead: usize } {
-    const initialInBucketIndex = entry.initialInBucketIndex;
-    const wheelStepIndex = entry.wheelStepIndex;
-    const step = Comptimes.WHEEL_PATTERNS[initialInBucketIndex][wheelStepIndex];
-
-    const localOffset: usize = entry.localOffset;
-    buckets[localOffset] &= step.bitMask;
-
-    const initialBucketIndex = @as(usize, entry.initialBucketIndex);
-    const advance = initialBucketIndex * @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend);
-    const newOffset = localOffset + advance;
-    const segmentsAhead = newOffset / SEGMENT_ELEMS;
-
-    return .{
-        .entry = RingEntry{
-            .localOffset = @intCast(newOffset % SEGMENT_ELEMS),
-            .initialBucketIndex = entry.initialBucketIndex,
-            .initialInBucketIndex = initialInBucketIndex,
-            .wheelStepIndex = wheelStepIndex +% 1,
-        },
-        .segmentsAhead = segmentsAhead,
-    };
-}

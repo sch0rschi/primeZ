@@ -244,20 +244,19 @@ noinline fn discoverSievingPrimes(
                 const bucketIndex = bitIndex / BUCKET_BITS;
                 const inBucketIndex: u3 = @intCast(bitIndex % BUCKET_BITS);
 
-                if (prime > PRE_LARGE_THRESHOLD) {
-                    const target210 = SievePrimeMod.firstAdmissibleMultiple210(prime, startInclusive);
-                    if (target210.bucketIndex < queryBucketsLength) {
-                        const realLargeSievePrime = LargeSievePrime.fromTarget210(target210, bucketIndex, inBucketIndex);
-                        large.add(realLargeSievePrime, outputBucketsStart);
+                if (prime > MEDIUM_THRESHOLD) {
+                    const target2310 = SievePrimeMod.firstAdmissibleMultiple2310(prime, startInclusive);
+                    if (target2310.bucketIndex < queryBucketsLength) {
+                        const realLargeSievePrime = LargeSievePrime.fromTarget2310(target2310, bucketIndex, inBucketIndex);
+                        if (prime > PRE_LARGE_THRESHOLD) {
+                            large.add(realLargeSievePrime, outputBucketsStart);
+                        } else {
+                            preLarge.add(realLargeSievePrime, outputBucketsStart);
+                        }
                     }
                 } else {
                     const target = SievePrimeMod.firstAdmissibleMultiple(prime, startInclusive);
-                    if (prime > MEDIUM_THRESHOLD) {
-                        if (target.bucketIndex < queryBucketsLength) {
-                            const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
-                            preLarge.add(realSievePrime, outputBucketsStart);
-                        }
-                    } else if (prime > SMALL_SEGMENT_THRESHOLD) {
+                    if (prime > SMALL_SEGMENT_THRESHOLD) {
                         if (target.bucketIndex < queryBucketsLength) {
                             const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
                             medium.add(realSievePrime, outputBucketsStart);
@@ -275,15 +274,17 @@ noinline fn discoverSievingPrimes(
                 }
 
                 if (prime <= dsp) {
-                    if (prime > PRE_LARGE_THRESHOLD) {
-                        const selfTarget210 = SievePrimeMod.firstAdmissibleMultiple210(prime, 0);
-                        const selfLargeSievePrime = LargeSievePrime.fromTarget210(selfTarget210, bucketIndex, inBucketIndex);
-                        selfLarge.add(selfLargeSievePrime, selfBucketsStart);
+                    if (prime > MEDIUM_THRESHOLD) {
+                        const selfTarget2310 = SievePrimeMod.firstAdmissibleMultiple2310(prime, 0);
+                        const selfLargeSievePrime = LargeSievePrime.fromTarget2310(selfTarget2310, bucketIndex, inBucketIndex);
+                        if (prime > PRE_LARGE_THRESHOLD) {
+                            selfLarge.add(selfLargeSievePrime, selfBucketsStart);
+                        } else {
+                            selfPreLarge.add(selfLargeSievePrime, selfBucketsStart);
+                        }
                     } else {
                         const selfSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, 0);
-                        if (prime > MEDIUM_THRESHOLD) {
-                            selfPreLarge.add(selfSievePrime, selfBucketsStart);
-                        } else if (prime > SMALL_SEGMENT_THRESHOLD) {
+                        if (prime > SMALL_SEGMENT_THRESHOLD) {
                             selfMedium.add(selfSievePrime, selfBucketsStart);
                         } else if (prime > SMALL_STRIDE_THRESHOLD) {
                             selfSmallSegment.add(selfSievePrime);
