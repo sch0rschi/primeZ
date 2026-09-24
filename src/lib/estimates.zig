@@ -18,6 +18,17 @@ pub fn primeCountUpperBound(n: Types.PRIME_TYPE) u64 {
     return @as(u64, @intFromFloat(@ceil(est)));
 }
 
+pub fn primeCountLowerBound(n: Types.PRIME_TYPE) u64 {
+    if (n < 17) return 0;
+    const xf = @as(f64, @floatFromInt(n));
+    return @as(u64, @intFromFloat(@floor(xf / @log(xf))));
+}
+
+pub fn primeCountInRangeUpperBound(lowerExclusive: Types.PRIME_TYPE, upperInclusive: Types.PRIME_TYPE) u64 {
+    if (upperInclusive <= lowerExclusive) return 0;
+    return primeCountUpperBound(upperInclusive) -| primeCountLowerBound(lowerExclusive);
+}
+
 pub fn nthPrimeUpperBound(n: usize) Types.PRIME_TYPE {
     if (n < 6) {
         const small = [_]Types.PRIME_TYPE{ 2, 3, 5, 7, 11 };

@@ -1,7 +1,8 @@
 const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
-const BuildUtils = @import("buildUtils");
+const Layout = @import("../layout.zig").Layout;
+const Estimates = @import("../../estimates.zig");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
@@ -44,12 +45,6 @@ fn bucketOf(ptr: [*]SievePrime) *Bucket {
     return @ptrFromInt(address);
 }
 
-const TOTAL_POPULATION: usize = blk: {
-    var total: usize = 0;
-    for (BuildUtils.SMALL_SEGMENT_PRIME_COUNTS_BY_RESIDUE) |count| total += count;
-    break :blk total;
-};
-
 fn maxBucketsFor(population: usize) usize {
     return 2 * CELL_COUNT + (population + BUCKET_LEN - 1) / BUCKET_LEN + 1;
 }
@@ -62,11 +57,12 @@ pub const SmallSegmentSievePrimes = struct {
     bucketPool: []align(BLOCK_BYTES) Bucket,
     bucketNextUnclaimed: usize,
 
-    pub fn init(allocator: std.mem.Allocator) !SmallSegmentSievePrimes {
+    pub fn init(allocator: std.mem.Allocator, layout: Layout, maxPrime: usize) !SmallSegmentSievePrimes {
         const emptyRow = [_]?[*]SievePrime{null} ** WHEEL_STEP_COUNT;
         const maps: BucketCursorGrid = [_][WHEEL_STEP_COUNT]?[*]SievePrime{emptyRow} ** RESIDUE_COUNT;
 
-        const bucketPool = try allocator.alignedAlloc(Bucket, BLOCK_ALIGNMENT, maxBucketsFor(TOTAL_POPULATION));
+        const population: usize = @intCast(Estimates.primeCountInRangeUpperBound(layout.smallStrideThreshold, @min(maxPrime, layout.smallSegmentThreshold)));
+        const bucketPool = try allocator.alignedAlloc(Bucket, BLOCK_ALIGNMENT, maxBucketsFor(population));
 
         return SmallSegmentSievePrimes{
             .maps = maps,
@@ -115,9 +111,21 @@ pub const SmallSegmentSievePrimes = struct {
 
     pub fn add(
         self: *SmallSegmentSievePrimes,
+        buckets: Types.SIEVE_BUCKETS_TYPE,
+        bucketsStart: usize,
+        bucketsEndExclusive: usize,
         sievePrime: SievePrime,
     ) void {
-        self.storeInBucket(&self.maps[sievePrime.initialInBucketIndex][sievePrime.wheelStepIndex], sievePrime);
+        if (sievePrime.currentBucketIndex >= bucketsEndExclusive) {
+            self.storeInBucket(&self.maps[sievePrime.initialInBucketIndex][sievePrime.wheelStepIndex], sievePrime);
+            return;
+        }
+        var registered = sievePrime;
+        switch (sievePrime.initialInBucketIndex) {
+            inline else => |ari| switch (sievePrime.wheelStepIndex) {
+                inline else => |wsi| applySievePrimeIntoSegmentSmallSegment(ari, wsi, buckets, bucketsStart, bucketsEndExclusive, &registered, self, &self.maps),
+            },
+        }
     }
 
     pub noinline fn apply(
@@ -148,6 +156,7 @@ pub const SmallSegmentSievePrimes = struct {
                                     bucketsEndExclusive,
                                     sievePrime,
                                     self,
+                                    &self.mapsSwap,
                                 );
                             } else {
                                 self.storeInBucket(&self.mapsSwap[ari][wsi], sievePrime.*);
@@ -173,6 +182,7 @@ pub const SmallSegmentSievePrimes = struct {
         bucketsEndExclusive: usize,
         sievePrime: *SievePrime,
         self: *SmallSegmentSievePrimes,
+        nextSegmentGrid: *BucketCursorGrid,
     ) void {
         const bucketCount = bucketsEndExclusive - bucketsStart;
         const initialBucketIndex = @as(usize, sievePrime.initialBucketIndex);
@@ -226,7 +236,7 @@ pub const SmallSegmentSievePrimes = struct {
                     .initialInBucketIndex = initialInBucketIndex,
                     .wheelStepIndex = newWheelStepIndex,
                 };
-                self.storeInBucket(&self.mapsSwap[initialInBucketIndex][newWheelStepIndex], updated);
+                self.storeInBucket(&nextSegmentGrid[initialInBucketIndex][newWheelStepIndex], updated);
                 return;
             }
         } else {

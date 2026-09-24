@@ -3,7 +3,9 @@ const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
 const Utils = @import("../utils.zig");
 const PreSieve = @import("../preSieve.zig");
-const BuildUtils = @import("buildUtils");
+const LayoutMod = @import("../layout.zig");
+const Layout = LayoutMod.Layout;
+const QueryLayouts = LayoutMod.QueryLayouts;
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
@@ -17,12 +19,6 @@ const LargeSievePrimes = @import("largeSievePrimes.zig").LargeSievePrimes;
 
 const ALIGNMENT = std.mem.Alignment.@"8";
 
-const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
-const SMALL_STRIDE_THRESHOLD: usize = BuildUtils.SMALL_STRIDE_THRESHOLD;
-const SMALL_SEGMENT_THRESHOLD: usize = BuildUtils.SMALL_SEGMENT_THRESHOLD;
-const MEDIUM_THRESHOLD: usize = BuildUtils.MEDIUM_THRESHOLD;
-const PRE_LARGE_THRESHOLD: usize = BuildUtils.PRE_LARGE_THRESHOLD;
-
 const BUCKET_BITS = @bitSizeOf(Types.SIEVE_BUCKET_TYPE);
 
 const Segment = struct {
@@ -33,6 +29,7 @@ const Segment = struct {
 
 pub const SegmentIterator = struct {
     allocator: std.mem.Allocator,
+    layout: Layout,
 
     buckets: []align(8) Types.SIEVE_BUCKET_TYPE,
     containers: []align(8) Types.SIEVE_CONTAINER_TYPE,
@@ -49,18 +46,24 @@ pub const SegmentIterator = struct {
     preLarge: PreLargeSievePrimes,
     large: LargeSievePrimes,
 
-    pub noinline fn init(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize) !SegmentIterator {
+    pub fn initDefault(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize) !SegmentIterator {
+        return init(allocator, startInclusive, limitInclusive, LayoutMod.layoutsForQuery(limitInclusive));
+    }
+
+    pub noinline fn init(allocator: std.mem.Allocator, startInclusive: usize, limitInclusive: usize, layouts: QueryLayouts) !SegmentIterator {
+        const layout = layouts.query;
+        const segmentElems = layout.segmentElems;
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(limitInclusive));
         const buckets = try allocator.alignedAlloc(
             Types.SIEVE_BUCKET_TYPE,
             ALIGNMENT,
-            @min(SEGMENT_ELEMS, bucketsLength),
+            @min(segmentElems, bucketsLength),
         );
 
         const containers: Types.SIEVE_CONTAINERS_TYPE = std.mem.bytesAsSlice(u64, std.mem.sliceAsBytes(buckets));
 
         const startBucketIndex = ALIGNMENT.backward(startInclusive / Comptimes.WHEEL_CIRCUMFERENCE);
-        const bucketsEndExclusive = @min(startBucketIndex + SEGMENT_ELEMS, bucketsLength);
+        const bucketsEndExclusive = @min(startBucketIndex + segmentElems, bucketsLength);
 
         PreSieve.fill(buckets, startBucketIndex);
         if (startBucketIndex == 0) {
@@ -71,6 +74,7 @@ pub const SegmentIterator = struct {
 
         var self = SegmentIterator{
             .allocator = allocator,
+            .layout = layout,
 
             .buckets = buckets,
             .containers = containers,
@@ -81,15 +85,17 @@ pub const SegmentIterator = struct {
             .bucketsEndExclusive = bucketsEndExclusive,
             .started = false,
 
-            .smallStride = try SmallStrideSievePrimes.init(allocator),
-            .smallSegment = try SmallSegmentSievePrimes.init(allocator),
-            .medium = try MediumSievePrimes.init(allocator),
-            .preLarge = try PreLargeSievePrimes.init(allocator),
-            .large = try LargeSievePrimes.init(allocator, rootPrime),
+            .smallStride = try SmallStrideSievePrimes.init(allocator, layout, rootPrime),
+            .smallSegment = try SmallSegmentSievePrimes.init(allocator, layout, rootPrime),
+            .medium = try MediumSievePrimes.init(allocator, layout, rootPrime),
+            .preLarge = try PreLargeSievePrimes.init(allocator, layout, rootPrime),
+            .large = try LargeSievePrimes.init(allocator, layout, rootPrime),
         };
 
         try discoverSievingPrimes(
             allocator,
+            layout,
+            layouts.selfSieve,
             rootPrime,
             startInclusive,
             &self.smallStride,
@@ -124,12 +130,12 @@ pub const SegmentIterator = struct {
             }
             self.started = true;
         } else {
-            const candidateBucketsStart = self.bucketsStart + SEGMENT_ELEMS;
+            const candidateBucketsStart = self.bucketsStart + self.layout.segmentElems;
             if (candidateBucketsStart >= self.bucketsLength) {
                 return null;
             }
             self.bucketsStart = candidateBucketsStart;
-            self.bucketsEndExclusive = @min(self.bucketsStart + SEGMENT_ELEMS, self.bucketsLength);
+            self.bucketsEndExclusive = @min(self.bucketsStart + self.layout.segmentElems, self.bucketsLength);
             PreSieve.fill(self.buckets, self.bucketsStart);
         }
 
@@ -170,6 +176,8 @@ fn crossOffSegment(
 
 noinline fn discoverSievingPrimes(
     allocator: std.mem.Allocator,
+    layout: Layout,
+    selfLayout: Layout,
     rootPrime: usize,
     startInclusive: usize,
     smallStride: *SmallStrideSievePrimes,
@@ -186,31 +194,32 @@ noinline fn discoverSievingPrimes(
 
     const dsp = std.math.sqrt(rootPrime);
 
+    const selfSegmentElems = selfLayout.segmentElems;
     const selfBucketsLength = ALIGNMENT.forward(Utils.getSieveLength(rootPrime));
     const selfBuckets = try allocator.alignedAlloc(
         Types.SIEVE_BUCKET_TYPE,
         ALIGNMENT,
-        @min(SEGMENT_ELEMS, selfBucketsLength),
+        @min(selfSegmentElems, selfBucketsLength),
     );
     defer allocator.free(selfBuckets);
     const selfContainers: Types.SIEVE_CONTAINERS_TYPE = std.mem.bytesAsSlice(u64, std.mem.sliceAsBytes(selfBuckets));
 
-    var selfSmallStride = try SmallStrideSievePrimes.init(allocator);
+    var selfSmallStride = try SmallStrideSievePrimes.init(allocator, selfLayout, dsp);
     defer selfSmallStride.deinit(allocator);
-    var selfSmallSegment = try SmallSegmentSievePrimes.init(allocator);
+    var selfSmallSegment = try SmallSegmentSievePrimes.init(allocator, selfLayout, dsp);
     defer selfSmallSegment.deinit(allocator);
-    var selfMedium = try MediumSievePrimes.init(allocator);
+    var selfMedium = try MediumSievePrimes.init(allocator, selfLayout, dsp);
     defer selfMedium.deinit(allocator);
-    var selfPreLarge = try PreLargeSievePrimes.init(allocator);
+    var selfPreLarge = try PreLargeSievePrimes.init(allocator, selfLayout, dsp);
     defer selfPreLarge.deinit(allocator);
-    var selfLarge = try LargeSievePrimes.init(allocator, dsp);
+    var selfLarge = try LargeSievePrimes.init(allocator, selfLayout, dsp);
     defer selfLarge.deinit(allocator);
 
     PreSieve.fill(selfBuckets, 0);
     @memcpy(selfBuckets[0..PreSieve.OVERRIDE_BUCKET_COUNT], &PreSieve.OVERRIDE_BUCKETS);
 
     var selfBucketsStart: usize = 0;
-    var selfBucketsEndExclusive: usize = @min(SEGMENT_ELEMS, selfBucketsLength);
+    var selfBucketsEndExclusive: usize = @min(selfSegmentElems, selfBucketsLength);
     var started = false;
 
     outer: while (true) {
@@ -218,10 +227,10 @@ noinline fn discoverSievingPrimes(
             if (selfBucketsStart >= selfBucketsLength) break;
             started = true;
         } else {
-            const candidate = selfBucketsStart + SEGMENT_ELEMS;
+            const candidate = selfBucketsStart + selfSegmentElems;
             if (candidate >= selfBucketsLength) break;
             selfBucketsStart = candidate;
-            selfBucketsEndExclusive = @min(selfBucketsStart + SEGMENT_ELEMS, selfBucketsLength);
+            selfBucketsEndExclusive = @min(selfBucketsStart + selfSegmentElems, selfBucketsLength);
             PreSieve.fill(selfBuckets, selfBucketsStart);
         }
 
@@ -244,11 +253,11 @@ noinline fn discoverSievingPrimes(
                 const bucketIndex = bitIndex / BUCKET_BITS;
                 const inBucketIndex: u3 = @intCast(bitIndex % BUCKET_BITS);
 
-                if (prime > MEDIUM_THRESHOLD) {
+                if (prime > layout.mediumThreshold) {
                     const target2310 = SievePrimeMod.firstAdmissibleMultiple2310(prime, startInclusive);
                     if (target2310.bucketIndex < queryBucketsLength) {
                         const realLargeSievePrime = LargeSievePrime.fromTarget2310(target2310, bucketIndex, inBucketIndex);
-                        if (prime > PRE_LARGE_THRESHOLD) {
+                        if (prime > layout.preLargeThreshold) {
                             large.add(realLargeSievePrime, outputBucketsStart);
                         } else {
                             preLarge.add(realLargeSievePrime, outputBucketsStart);
@@ -256,13 +265,13 @@ noinline fn discoverSievingPrimes(
                     }
                 } else {
                     const target = SievePrimeMod.firstAdmissibleMultiple(prime, startInclusive);
-                    if (prime > SMALL_SEGMENT_THRESHOLD) {
+                    if (prime > layout.smallSegmentThreshold) {
                         if (target.bucketIndex < queryBucketsLength) {
                             const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
                             medium.add(realSievePrime, outputBucketsStart);
                         }
-                    } else if (prime > SMALL_STRIDE_THRESHOLD) {
-                        smallSegment.add(SievePrime.fromTarget(target, bucketIndex, inBucketIndex));
+                    } else if (prime > layout.smallStrideThreshold) {
+                        smallSegment.add(outputBuckets, outputBucketsStart, outputBucketsEndExclusive, SievePrime.fromTarget(target, bucketIndex, inBucketIndex));
                     } else {
                         const realSievePrime = SievePrime.fromTarget(target, bucketIndex, inBucketIndex);
                         inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
@@ -274,20 +283,20 @@ noinline fn discoverSievingPrimes(
                 }
 
                 if (prime <= dsp) {
-                    if (prime > MEDIUM_THRESHOLD) {
+                    if (prime > selfLayout.mediumThreshold) {
                         const selfTarget2310 = SievePrimeMod.firstAdmissibleMultiple2310(prime, 0);
                         const selfLargeSievePrime = LargeSievePrime.fromTarget2310(selfTarget2310, bucketIndex, inBucketIndex);
-                        if (prime > PRE_LARGE_THRESHOLD) {
+                        if (prime > selfLayout.preLargeThreshold) {
                             selfLarge.add(selfLargeSievePrime, selfBucketsStart);
                         } else {
                             selfPreLarge.add(selfLargeSievePrime, selfBucketsStart);
                         }
                     } else {
                         const selfSievePrime = SievePrime.from(prime, bucketIndex, inBucketIndex, 0);
-                        if (prime > SMALL_SEGMENT_THRESHOLD) {
+                        if (prime > selfLayout.smallSegmentThreshold) {
                             selfMedium.add(selfSievePrime, selfBucketsStart);
-                        } else if (prime > SMALL_STRIDE_THRESHOLD) {
-                            selfSmallSegment.add(selfSievePrime);
+                        } else if (prime > selfLayout.smallStrideThreshold) {
+                            selfSmallSegment.add(selfBuckets, selfBucketsStart, selfBucketsEndExclusive, selfSievePrime);
                         } else {
                             inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
                                 if (ari == inBucketIndex) {

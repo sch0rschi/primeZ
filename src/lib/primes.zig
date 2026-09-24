@@ -6,6 +6,7 @@ const Utils = @import("sieveEngine/utils.zig");
 const Types = @import("sieveEngine/types.zig");
 const SegmentIterator = @import("sieveEngine/segmentIterator/root.zig").SegmentIterator;
 const Pi = @import("pi.zig");
+const LayoutMod = @import("sieveEngine/layout.zig");
 
 pub fn nthPrime(allocator: std.mem.Allocator, nth: usize) !Types.PRIME_TYPE {
     if (nth < Comptimes.WHEEL_PRIMES.len) {
@@ -14,7 +15,7 @@ pub fn nthPrime(allocator: std.mem.Allocator, nth: usize) !Types.PRIME_TYPE {
 
     const nthPrimeUpperBound = Estimates.nthPrimeUpperBound(nth);
 
-    var segmentIterator = try SegmentIterator.init(allocator, 0, nthPrimeUpperBound);
+    var segmentIterator = try SegmentIterator.initDefault(allocator, 0, nthPrimeUpperBound);
     defer segmentIterator.deinit();
 
     var primeCount: usize = 2;
@@ -58,7 +59,7 @@ pub fn getPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) ![]Types
     var primes = try std.ArrayList(Types.PRIME_TYPE).initCapacity(allocator, amountUpperBound);
     primes.appendSliceAssumeCapacity(&Comptimes.WHEEL_PRIMES);
 
-    var segmentIterator = try SegmentIterator.init(allocator, 0, limit);
+    var segmentIterator = try SegmentIterator.initDefault(allocator, 0, limit);
     defer segmentIterator.deinit();
 
     outer: while (try segmentIterator.next()) |segment| {
@@ -91,7 +92,7 @@ pub fn sumPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Types.P
     }
     var sum: Types.PRIME_TYPE = 10;
 
-    var segmentIterator = try SegmentIterator.init(allocator, 0, limit);
+    var segmentIterator = try SegmentIterator.initDefault(allocator, 0, limit);
     defer segmentIterator.deinit();
 
     outer: while (try segmentIterator.next()) |segment| {
@@ -113,6 +114,10 @@ pub fn sumPrimes(allocator: std.mem.Allocator, limit: Types.PRIME_TYPE) !Types.P
 }
 
 pub fn piSieveCounting(allocator: std.mem.Allocator, start: u64, limit: u64) !usize {
+    return piSieveCountingWithLayouts(allocator, start, limit, LayoutMod.layoutsForQuery(limit));
+}
+
+pub fn piSieveCountingWithLayouts(allocator: std.mem.Allocator, start: u64, limit: u64, layouts: LayoutMod.QueryLayouts) !usize {
     if (limit < 2 or start > limit) {
         return 0;
     }
@@ -128,7 +133,7 @@ pub fn piSieveCounting(allocator: std.mem.Allocator, start: u64, limit: u64) !us
         return count;
     }
 
-    var segmentIterator = try SegmentIterator.init(allocator, sieveFrom, limit);
+    var segmentIterator = try SegmentIterator.init(allocator, sieveFrom, limit, layouts);
     defer segmentIterator.deinit();
 
     const precedingCount = if (sieveFrom == 0) 0 else Utils.admissibleCountUpTo(sieveFrom - 1);

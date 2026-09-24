@@ -268,3 +268,69 @@ test "Primes.pi small values" {
     try std.testing.expectEqual(@as(usize, 1229), try Primes.pi(allocator, 10_000));
     try std.testing.expectEqual(@as(usize, 9592), try Primes.pi(allocator, 100_000));
 }
+
+const LayoutMod = @import("sieveEngine/layout.zig");
+
+fn expectLayoutsAgree(allocator: std.mem.Allocator, layouts: LayoutMod.QueryLayouts, start: usize, limit: usize) !void {
+    const expected = try Primes.piSieveCounting(allocator, start, limit);
+    const counted = try Primes.piSieveCountingWithLayouts(allocator, start, limit, layouts);
+    if (counted != expected) {
+        std.debug.print("segment={} stripe={} selfSegment={} start={} limit={}: counted={} expected={}\n", .{
+            layouts.query.segmentElems,
+            layouts.query.stripeElems,
+            layouts.selfSieve.segmentElems,
+            start,
+            limit,
+            counted,
+            expected,
+        });
+    }
+    try std.testing.expectEqual(expected, counted);
+}
+
+test "piSieveCounting agrees across explicit layouts" {
+    const allocator = std.testing.allocator;
+
+    const shapes = [_][2]usize{
+        .{ 4096, 4096 },
+        .{ 8192, 2048 },
+        .{ 16 * 1024, 1024 },
+        .{ 64 * 1024, 1024 },
+    };
+    const ranges = [_][2]usize{
+        .{ 0, 10_000_000 },
+        .{ 999_000_000, 1_000_000_000 },
+        .{ 999_999_000_000, 1_000_000_000_000 },
+        .{ 3_999_999_000_000, 4_000_000_000_000 },
+    };
+
+    for (shapes) |shape| {
+        const layouts = LayoutMod.QueryLayouts.pinned(shape[0], shape[1]);
+        for (ranges) |range| try expectLayoutsAgree(allocator, layouts, range[0], range[1]);
+    }
+
+    const mixed = LayoutMod.QueryLayouts{
+        .query = LayoutMod.Layout.pinned(4096, 4096),
+        .selfSieve = LayoutMod.Layout.pinned(64 * 1024, 1024),
+    };
+    for (ranges) |range| try expectLayoutsAgree(allocator, mixed, range[0], range[1]);
+
+    const tiny = LayoutMod.QueryLayouts.pinned(4096, 4096);
+    try std.testing.expectEqual(@as(usize, 664_579), try Primes.piSieveCountingWithLayouts(allocator, 0, 10_000_000, tiny));
+    try std.testing.expectEqual(@as(usize, 50_847_534), try Primes.piSieveCountingWithLayouts(allocator, 0, 1_000_000_000, LayoutMod.QueryLayouts.pinned(64 * 1024, 1024)));
+}
+
+test "segment size per query stays within the hardware bounds" {
+    const hw = LayoutMod.HardwareProfile.fromKiB(48, 1024, 16 * 1024);
+    try std.testing.expectEqual(@as(usize, 512 * 1024), LayoutMod.segmentElemsForQuery(hw, 10_000_000_000));
+    try std.testing.expectEqual(@as(usize, 1024 * 1024), LayoutMod.segmentElemsForQuery(hw, 100_000_000_000));
+    try std.testing.expectEqual(@as(usize, 2048 * 1024), LayoutMod.segmentElemsForQuery(hw, 1_000_000_000_000));
+    try std.testing.expectEqual(@as(usize, 4096 * 1024), LayoutMod.segmentElemsForQuery(hw, 1_000_000_000_000_000_000));
+
+    const noL3 = LayoutMod.HardwareProfile.fromKiB(32, 256, 0);
+    try std.testing.expectEqual(@as(usize, 512 * 1024), LayoutMod.segmentElemsForQuery(noL3, 1_000_000_000_000_000_000));
+    try std.testing.expectEqual(@as(usize, 128 * 1024), LayoutMod.segmentElemsForQuery(noL3, 100));
+
+    const huge = LayoutMod.HardwareProfile.fromKiB(64, 16 * 1024, 256 * 1024);
+    try std.testing.expectEqual(LayoutMod.MAX_SEGMENT_ELEMS, LayoutMod.segmentElemsForQuery(huge, std.math.maxInt(u64)));
+}

@@ -1,19 +1,16 @@
 const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
-const BuildUtils = @import("buildUtils");
+const LayoutMod = @import("../layout.zig");
+const Layout = LayoutMod.Layout;
 const Estimates = @import("../../estimates.zig");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.SievePrime;
 const CompactSievePrime = SievePrimeMod.SmallStrideCompactSievePrime;
 
-const STRIPE_ELEMS: usize = BuildUtils.STRIPE_ELEMS;
-const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
-const SMALL_STRIDE_THRESHOLD: usize = BuildUtils.SMALL_STRIDE_THRESHOLD;
-
 comptime {
-    if (SEGMENT_ELEMS > 1 << 23) @compileError("SEGMENT_ELEMS exceeds CompactSievePrime.localOffset's u23 budget - widen that field before raising this bound");
+    if (LayoutMod.MAX_SEGMENT_ELEMS > 1 << 23) @compileError("MAX_SEGMENT_ELEMS exceeds CompactSievePrime.localOffset's u23 budget - widen that field before raising this bound");
 }
 
 inline fn applyCompactSievePrimeIntoSegment(
@@ -21,6 +18,7 @@ inline fn applyCompactSievePrimeIntoSegment(
     buckets: Types.SIEVE_BUCKETS_TYPE,
     bucketsStart: usize,
     bucketsEndExclusive: usize,
+    segmentElems: usize,
     entry: *CompactSievePrime,
 ) void {
     const bucketCount = bucketsEndExclusive - bucketsStart;
@@ -82,7 +80,7 @@ inline fn applyCompactSievePrimeIntoSegment(
             buckets[currentBucketIndex + accumulatedBucketIndexAdvance[ari]] &= accumulatedWheelPattern[ari].bitMask;
         } else {
             const rawExit = currentBucketIndex + accumulatedBucketIndexAdvance[ari];
-            const reduced = if (rawExit >= SEGMENT_ELEMS) rawExit - SEGMENT_ELEMS else rawExit;
+            const reduced = if (rawExit >= segmentElems) rawExit - segmentElems else rawExit;
             entry.localOffset = @intCast(reduced);
             entry.wheelStepIndex = wheelStepIndex +% @as(u3, ari);
             return;
@@ -98,8 +96,11 @@ pub const SmallStrideSievePrimes = struct {
 
     active: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(CompactSievePrime),
 
-    pub fn init(allocator: std.mem.Allocator) !SmallStrideSievePrimes {
-        const capacity = Estimates.primeCountUpperBound(SMALL_STRIDE_THRESHOLD);
+    segmentElems: usize,
+    stripeElems: usize,
+
+    pub fn init(allocator: std.mem.Allocator, layout: Layout, maxPrime: usize) !SmallStrideSievePrimes {
+        const capacity = Estimates.primeCountUpperBound(@min(maxPrime, layout.smallStrideThreshold));
         var pending: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(SievePrime) = undefined;
         var active: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(CompactSievePrime) = undefined;
         for (&pending, &active) |*p, *a| {
@@ -111,6 +112,8 @@ pub const SmallStrideSievePrimes = struct {
             .pending = pending,
             .pendingStart = .{0} ** Comptimes.ADMISSIBLE_RESIDUES.count,
             .active = active,
+            .segmentElems = layout.segmentElems,
+            .stripeElems = layout.stripeElems,
         };
     }
 
@@ -148,7 +151,7 @@ pub const SmallStrideSievePrimes = struct {
 
                 std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
                 const localOffset = sievePrime.currentBucketIndex - bucketsStart;
-                std.debug.assert(localOffset < SEGMENT_ELEMS);
+                std.debug.assert(localOffset < self.segmentElems);
                 self.active[ari].appendAssumeCapacity(CompactSievePrime{
                     .localOffset = @intCast(localOffset),
                     .initialBucketIndex = sievePrime.initialBucketIndex,
@@ -167,12 +170,12 @@ pub const SmallStrideSievePrimes = struct {
     ) void {
         var stripeEnd = bucketsStart;
         while (stripeEnd < bucketsEndExclusive) {
-            stripeEnd = @min(stripeEnd + STRIPE_ELEMS, bucketsEndExclusive);
+            stripeEnd = @min(stripeEnd + self.stripeElems, bucketsEndExclusive);
 
             inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
                 for (self.active[ari].items) |*entry| {
                     if (bucketsStart + entry.localOffset < stripeEnd) {
-                        applyCompactSievePrimeIntoSegment(ari, buckets, bucketsStart, stripeEnd, entry);
+                        applyCompactSievePrimeIntoSegment(ari, buckets, bucketsStart, stripeEnd, self.segmentElems, entry);
                     }
                 }
             }

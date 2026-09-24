@@ -46,15 +46,20 @@ zig build
 ./zig-out/bin/primez 100000000000
 ```
 
-The build auto-detects the CPU's L1 and L2 cache sizes and derives a
-segment size from them internally. Both cache sizes are build-time
-parameters that can be overridden:
+The build is optimized for a hardware profile: the L1d, L2 and L3 cache
+sizes. On a native build they are auto-detected; they can be overridden
+(values in KiB), and cross builds without them default to 32 KiB L1d,
+1 MiB L2 and 16 MiB L3:
 
 ``` sh
-zig build -Dl1_cache_size_in_kb=128 -Dl2_cache_size_in_kb=1024
+zig build -Dl1cs=48 -Dl2cs=1024 -Dl3cs=16384
 ```
 
-Values are specified in KiB.
+The segment size is chosen per query
+(`clamp(2*sqrt(limit), L2/2, L3/4)`, as a power of two, at most 8 MiB), and
+the tier thresholds scale with it. `primez --print-layout <limit>` shows the
+layout a query would use. `-Dsegsz=<KiB>` pins the segment size for
+experiments.
 
 ### Comparing against primesieve
 

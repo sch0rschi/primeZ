@@ -5,21 +5,25 @@ Per-sieve-tier primeZ vs. primesieve comparison.
 
 primeZ's segmented sieve classifies each sieving prime into one of 5 tiers
 (smallStride/smallSegment/medium/preLarge/large) purely by the prime's own magnitude,
-using thresholds derived at build time from L1/L2 cache size (see
-buildUtils/sieveLayoutMath.zig). Which tiers are "active" for a query is
-decided entirely by sqrt(limit) - the window width (limit - start) only
-controls how much work is done, not which tiers participate.
+using thresholds that scale with the query's segment and stripe size (see
+src/lib/sieveEngine/layout.zig). The segment size is chosen per query from
+the machine's cache sizes and sqrt(limit), so the tier boundaries themselves
+depend on limit. Which tiers are "active" for a query is decided entirely by
+sqrt(limit) - the window width (limit - start) only controls how much work is
+done, not which tiers participate.
 
 This script:
-  1. Reads the *actual* build config straight from the primez binary's own
-     printed "Sieve size" / "L1 stripe size" (not by reimplementing the
-     build.zig formulas blind) and derives the 4 tier boundaries from it.
-  2. For smallStride/smallSegment: uses the maximal available window (start=0,
+  1. Asks the primez binary itself for the layout of a candidate limit
+     (`primez --print-layout <limit>`) and iterates limit = boundary^2 until the
+     boundary of the layout chosen for that limit is stable, so each scenario's
+     sqrt(limit) really sits at its tier's boundary under the layout primez
+     will actually use.
+  2. For smallStride: uses the maximal available window (start=0,
      limit=threshold^2) - sqrt(limit) can't be pushed higher without
      leaving the tier, so the window (and thus runtime) is structurally
-     capped. These almost never reach --target-seconds; that's expected,
+     capped. It almost never reaches --target-seconds; that's expected,
      not a bug - see the tier-bench SKILL.md for why.
-  3. For medium/preLarge/large: fixes limit = tier's own upper sqrt bound
+  3. For smallSegment/medium/preLarge/large: fixes limit = tier's own upper sqrt bound
      squared (large uses --large-multiplier x its lower bound instead,
      since large has no upper bound), then calibrates a start offset
      (start = limit - width) so the window width alone hits
@@ -44,8 +48,8 @@ import sys
 
 SECONDS_RE = re.compile(r"Seconds:\s*([0-9.]+)")
 PRIMES_RE = re.compile(r"Primes:\s*([0-9]+)")
-SIEVE_SIZE_RE = re.compile(r"Sieve size = (\d+) KiB")
-L1_SIZE_RE = re.compile(r"L1 stripe size = (\d+) KiB")
+SEGMENT_RE = re.compile(r"Query segment = (\d+) KiB, stripe = (\d+) KiB")
+TIERS_RE = re.compile(r"Query tiers = smallStride<=(\d+) smallSegment<=(\d+) medium<=(\d+) preLarge<=(\d+)")
 
 
 def run(argv: list[str]) -> str:
@@ -55,25 +59,33 @@ def run(argv: list[str]) -> str:
     return result.stdout + result.stderr
 
 
-def floor_pow2_clamped(kib: int) -> int:
-    kib = max(16, min(kib, 8192))
-    return 1 << (kib.bit_length() - 1)
-
-
-def detect_thresholds(primez_bin: str) -> dict[str, int]:
-    out = run([primez_bin, "0", "100"])
-    seg_kib = int(SIEVE_SIZE_RE.search(out).group(1))
-    l1_kib = int(L1_SIZE_RE.search(out).group(1))
-    stripe_elems = 1024 * min(l1_kib, seg_kib)
-    segment_elems = 1024 * seg_kib
+def layout_for(primez_bin: str, limit: int) -> dict[str, int]:
+    out = run([primez_bin, "--print-layout", str(limit)])
+    seg = SEGMENT_RE.search(out)
+    tiers = TIERS_RE.search(out)
     return {
-        "l1_kib": l1_kib,
-        "seg_kib": seg_kib,
-        "small_stride": stripe_elems // 5,
-        "small_segment": segment_elems,
-        "medium": segment_elems * 5,
-        "pre_large": segment_elems * 15,
+        "seg_kib": int(seg.group(1)),
+        "stripe_kib": int(seg.group(2)),
+        "small_stride": int(tiers.group(1)),
+        "small_segment": int(tiers.group(2)),
+        "medium": int(tiers.group(3)),
+        "pre_large": int(tiers.group(4)),
     }
+
+
+def limit_at_boundary(primez_bin: str, key: str, multiplier: float = 1.0, max_iters: int = 12) -> tuple[int, dict[str, int]]:
+    """Find limit with sqrt(limit) = multiplier * layout(limit)[key]."""
+    limit = 10**10
+    seen: set[int] = set()
+    for _ in range(max_iters):
+        layout = layout_for(primez_bin, limit)
+        bound = int(layout[key] * multiplier)
+        candidate = bound * bound
+        if candidate == limit or candidate in seen:
+            return candidate, layout_for(primez_bin, candidate)
+        seen.add(limit)
+        limit = candidate
+    return limit, layout_for(primez_bin, limit)
 
 
 def primez_run(primez_bin: str, start: int, limit: int) -> tuple[float, int]:
@@ -124,36 +136,31 @@ def main() -> int:
 
     only = {s.strip() for s in args.only.split(",")} if args.only else None
 
-    th = detect_thresholds(args.primez)
-    print(f"# detected: L1={th['l1_kib']}KiB segment={th['seg_kib']}KiB", file=sys.stderr)
-    print(
-        f"# tier boundaries (sieving-prime magnitude): "
-        f"smallStride<={th['small_stride']} smallSegment<={th['small_segment']} "
-        f"medium<={th['medium']} preLarge<={th['pre_large']} large>{th['pre_large']}",
-        file=sys.stderr,
-    )
+    print(f"# {run([args.primez, '--print-layout', '100']).splitlines()[0]}", file=sys.stderr)
 
     tiers: list[dict] = []
 
-    for name, sqrt_bound in [("smallStride", th["small_stride"]), ("smallSegment", th["small_segment"])]:
+    for name, key in [("smallStride", "small_stride")]:
         if only and name not in only:
             continue
-        limit = sqrt_bound * sqrt_bound
+        limit, layout = limit_at_boundary(args.primez, key)
         seconds, primes = primez_run(args.primez, 0, limit)
-        tiers.append({"name": name, "start": 0, "limit": limit, "pz_seconds": seconds, "pz_primes": primes, "capped": True})
+        tiers.append({"name": name, "start": 0, "limit": limit, "seg_kib": layout["seg_kib"], "pz_seconds": seconds, "pz_primes": primes, "capped": True})
 
-    for name, sqrt_bound in [("medium", th["medium"]), ("preLarge", th["pre_large"])]:
+    for name, key, mult in [("smallSegment", "small_segment", 1.0), ("medium", "medium", 1.0), ("preLarge", "pre_large", 1.0), ("large", "pre_large", args.large_multiplier)]:
         if only and name not in only:
             continue
-        limit = sqrt_bound * sqrt_bound
+        limit, layout = limit_at_boundary(args.primez, key, mult)
         start, seconds, primes = calibrate_width(args.primez, limit, args.target_seconds, args.tolerance)
-        tiers.append({"name": name, "start": start, "limit": limit, "pz_seconds": seconds, "pz_primes": primes, "capped": False})
+        tiers.append({"name": name, "start": start, "limit": limit, "seg_kib": layout["seg_kib"], "pz_seconds": seconds, "pz_primes": primes, "capped": False})
 
-    if not only or "large" in only:
-        large_sqrt = int(th["pre_large"] * args.large_multiplier)
-        limit = large_sqrt * large_sqrt
-        start, seconds, primes = calibrate_width(args.primez, limit, args.target_seconds, args.tolerance)
-        tiers.append({"name": "large", "start": start, "limit": limit, "pz_seconds": seconds, "pz_primes": primes, "capped": False})
+    for t in tiers:
+        l = layout_for(args.primez, t["limit"])
+        print(
+            f"# {t['name']}: segment={l['seg_kib']}KiB stripe={l['stripe_kib']}KiB tiers: smallStride<={l['small_stride']} "
+            f"smallSegment<={l['small_segment']} medium<={l['medium']} preLarge<={l['pre_large']}",
+            file=sys.stderr,
+        )
 
     for t in tiers:
         print(f"== {t['name']}: [{t['start']}, {t['limit']}] ==", file=sys.stderr)
@@ -168,7 +175,7 @@ def main() -> int:
     name_w = max(len(t["name"]) for t in tiers)
     range_w = max(len(f"[{t['start']}, {t['limit']}]") for t in tiers)
 
-    header = f"{'tier':<{name_w}} | {'range [start, limit]':<{range_w}} | {'primeZ':>10} | {'primesieve':>10} | result"
+    header = f"{'tier':<{name_w}} | {'range [start, limit]':<{range_w}} | {'segment':>9} | {'primeZ':>10} | {'primesieve':>10} | result"
     print()
     print(header)
     print("-" * len(header))
@@ -177,7 +184,8 @@ def main() -> int:
         pz, ps = t["pz_seconds"], t["ps_seconds"]
         ratio = f"primeZ {ps / pz:.2f}x faster" if pz <= ps else f"primesieve {pz / ps:.2f}x faster"
         note = " (capped - see tier-bench SKILL.md)" if t["capped"] else ""
-        print(f"{t['name']:<{name_w}} | {rng:<{range_w}} | {pz:>9.3f}s | {ps:>9.3f}s | {ratio}{note}")
+        seg = f"{t['seg_kib']}KiB"
+        print(f"{t['name']:<{name_w}} | {rng:<{range_w}} | {seg:>9} | {pz:>9.3f}s | {ps:>9.3f}s | {ratio}{note}")
 
     return 0
 

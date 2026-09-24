@@ -1,6 +1,8 @@
 const std = @import("std");
 const Types = @import("../types.zig");
-const BuildUtils = @import("buildUtils");
+const LayoutMod = @import("../layout.zig");
+const Layout = LayoutMod.Layout;
+const Estimates = @import("../../estimates.zig");
 
 const SievePrimeMod = @import("sievePrime.zig");
 const SievePrime = SievePrimeMod.LargeSievePrime;
@@ -10,9 +12,6 @@ const LargeSievePrimesMod = @import("largeSievePrimes.zig");
 const ringSizeFor = LargeSievePrimesMod.ringSizeFor;
 const toRingEntry = LargeSievePrimesMod.LargeSievePrimes.toRingEntry;
 const processOne = LargeSievePrimesMod.processOne;
-
-const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
-const PRE_LARGE_THRESHOLD: usize = BuildUtils.PRE_LARGE_THRESHOLD;
 
 const BLOCK_BYTES: usize = 16 * 1024;
 const BLOCK_HEADER_BYTES: usize = @sizeOf([*]RingEntry) + @sizeOf(?*anyopaque);
@@ -46,12 +45,6 @@ fn blockOf(ptr: [*]RingEntry) *Block {
     return @ptrFromInt(address);
 }
 
-const TOTAL_POPULATION: usize = blk: {
-    var total: usize = 0;
-    for (BuildUtils.PRE_LARGE_PRIME_COUNTS_BY_RESIDUE) |count| total += count;
-    break :blk total;
-};
-
 fn maxBlocksFor(population: usize, ringLen: usize) usize {
     return ringLen + (population + BLOCK_LEN - 1) / BLOCK_LEN + 2;
 }
@@ -62,23 +55,26 @@ pub const PreLargeSievePrimes = struct {
 
     ringWritePos: [][*]RingEntry,
     ringHead: usize,
+    segmentShift: std.math.Log2Int(usize),
 
     freeBlocks: ?*Block,
     blockPool: []align(BLOCK_BYTES) Block,
     nextUnclaimed: usize,
 
-    pub fn init(allocator: std.mem.Allocator) !PreLargeSievePrimes {
-        const ringLen = ringSizeFor(PRE_LARGE_THRESHOLD);
+    pub fn init(allocator: std.mem.Allocator, layout: Layout, maxPrime: usize) !PreLargeSievePrimes {
+        const ringLen = ringSizeFor(layout.preLargeThreshold, layout.segmentElems);
         const ringWritePos = try allocator.alloc([*]RingEntry, ringLen);
 
-        const blockCount = maxBlocksFor(TOTAL_POPULATION, ringLen);
+        const population: usize = @intCast(Estimates.primeCountInRangeUpperBound(layout.mediumThreshold, @min(maxPrime, layout.preLargeThreshold)));
+        const blockCount = maxBlocksFor(population, ringLen);
         const blockPool = try allocator.alignedAlloc(Block, BLOCK_ALIGNMENT, blockCount);
 
         var self = PreLargeSievePrimes{
-            .list = try std.ArrayList(SievePrime).initCapacity(allocator, TOTAL_POPULATION),
+            .list = try std.ArrayList(SievePrime).initCapacity(allocator, population),
             .pendingStart = 0,
             .ringWritePos = ringWritePos,
             .ringHead = 0,
+            .segmentShift = layout.segmentShift,
             .freeBlocks = null,
             .blockPool = blockPool,
             .nextUnclaimed = 0,
@@ -127,21 +123,20 @@ pub const PreLargeSievePrimes = struct {
 
     pub fn add(self: *PreLargeSievePrimes, sievePrime: SievePrime, bucketsStart: usize) void {
         const ringLen = self.ringWritePos.len;
-        const segmentsAhead = destinationOf(sievePrime, ringLen, bucketsStart);
+        const segmentsAhead = self.destinationOf(sievePrime, bucketsStart);
         if (segmentsAhead < ringLen) {
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
-            const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
+            const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead, self.segmentShift);
             self.storeSievingPrime(self.ringWritePos, slot, &entry);
         } else {
             self.list.appendAssumeCapacity(sievePrime);
         }
     }
 
-    fn destinationOf(sievePrime: SievePrime, ringLen: usize, bucketsStart: usize) usize {
-        _ = ringLen;
+    fn destinationOf(self: *const PreLargeSievePrimes, sievePrime: SievePrime, bucketsStart: usize) usize {
         std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
         const remaining = sievePrime.currentBucketIndex - bucketsStart;
-        return remaining / SEGMENT_ELEMS;
+        return remaining >> self.segmentShift;
     }
 
     pub noinline fn activate(self: *PreLargeSievePrimes, bucketsStart: usize) void {
@@ -150,17 +145,17 @@ pub const PreLargeSievePrimes = struct {
             const sievePrime = self.list.items[self.pendingStart];
             std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
             const remaining = sievePrime.currentBucketIndex - bucketsStart;
-            const segmentsAhead = remaining / SEGMENT_ELEMS;
+            const segmentsAhead = remaining >> self.segmentShift;
             if (segmentsAhead >= ringLen) break;
 
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
-            const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead);
+            const entry = toRingEntry(sievePrime, bucketsStart, segmentsAhead, self.segmentShift);
             self.storeSievingPrime(self.ringWritePos, slot, &entry);
             self.pendingStart += 1;
         }
     }
 
-    pub noinline fn apply(
+    pub fn apply(
         self: *PreLargeSievePrimes,
         buckets: Types.SIEVE_BUCKETS_TYPE,
         bucketsStart: usize,
@@ -168,6 +163,13 @@ pub const PreLargeSievePrimes = struct {
     ) void {
         _ = bucketsEndExclusive;
         _ = bucketsStart;
+        switch (self.segmentShift) {
+            inline LayoutMod.MIN_SEGMENT_SHIFT...LayoutMod.MAX_SEGMENT_SHIFT => |segmentShift| self.applyWithSegmentShift(segmentShift, buckets),
+            else => unreachable,
+        }
+    }
+
+    noinline fn applyWithSegmentShift(self: *PreLargeSievePrimes, comptime segmentShift: std.math.Log2Int(usize), buckets: Types.SIEVE_BUCKETS_TYPE) void {
         const ringWritePos = self.ringWritePos;
         const ringLen = ringWritePos.len;
         const cursor = self.ringHead;
@@ -182,8 +184,8 @@ pub const PreLargeSievePrimes = struct {
             const fill = (@intFromPtr(b.end) - @intFromPtr(items)) / @sizeOf(RingEntry);
 
             for (items[0..fill]) |entry| {
-                var result = processOne(buckets, entry);
-                while (result.segmentsAhead == 0) result = processOne(buckets, result.entry);
+                var result = processOne(buckets, entry, segmentShift);
+                while (result.segmentsAhead == 0) result = processOne(buckets, result.entry, segmentShift);
                 std.debug.assert(result.segmentsAhead < ringLen);
                 const slot = (cursor + result.segmentsAhead) & (ringLen - 1);
                 self.storeSievingPrime(ringWritePos, slot, &result.entry);

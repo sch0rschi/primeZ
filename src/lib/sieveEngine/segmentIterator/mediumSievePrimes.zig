@@ -1,7 +1,7 @@
 const std = @import("std");
 const Types = @import("../types.zig");
 const Comptimes = @import("../comptimes.zig");
-const BuildUtils = @import("buildUtils");
+const Layout = @import("../layout.zig").Layout;
 const Estimates = @import("../../estimates.zig");
 
 const SievePrimeMod = @import("sievePrime.zig");
@@ -9,8 +9,6 @@ const SievePrime = SievePrimeMod.SievePrime;
 const MediumBucketSievePrime = SievePrimeMod.MediumBucketSievePrime;
 
 const ringSizeFor = @import("largeSievePrimes.zig").ringSizeFor;
-
-const SEGMENT_ELEMS: usize = BuildUtils.SEGMENT_ELEMS;
 
 const RESIDUE_COUNT = Comptimes.ADMISSIBLE_RESIDUES.count;
 const WHEEL_INDEX_COUNT = RESIDUE_COUNT * RESIDUE_COUNT;
@@ -88,6 +86,7 @@ fn maxBucketsFor(population: usize) usize {
 pub const MediumSievePrimes = struct {
     ringWritePos: []?[*]SievePrime,
     ringHead: usize,
+    segmentShift: std.math.Log2Int(usize),
 
     ringFreeBlocks: ?*RingBlock,
     ringBlockPool: []align(BLOCK_BYTES) RingBlock,
@@ -103,12 +102,12 @@ pub const MediumSievePrimes = struct {
     bucketPool: []align(BLOCK_BYTES) Bucket,
     bucketNextUnclaimed: usize,
 
-    pub fn init(allocator: std.mem.Allocator) !MediumSievePrimes {
-        const ringLen = ringSizeFor(BuildUtils.MEDIUM_THRESHOLD);
+    pub fn init(allocator: std.mem.Allocator, layout: Layout, maxPrime: usize) !MediumSievePrimes {
+        const ringLen = ringSizeFor(layout.mediumThreshold, layout.segmentElems);
         const ringWritePos = try allocator.alloc(?[*]SievePrime, ringLen);
         @memset(ringWritePos, null);
 
-        const capacity = Estimates.primeCountUpperBound(BuildUtils.MEDIUM_THRESHOLD);
+        const capacity: usize = @intCast(Estimates.primeCountInRangeUpperBound(layout.smallSegmentThreshold, @min(maxPrime, layout.mediumThreshold)));
         const ringBlockCount = maxBlocksFor(capacity, ringLen);
         const ringBlockPool = try allocator.alignedAlloc(RingBlock, BLOCK_ALIGNMENT, ringBlockCount);
         const bucketCount = maxBucketsFor(capacity);
@@ -117,6 +116,7 @@ pub const MediumSievePrimes = struct {
         return MediumSievePrimes{
             .ringWritePos = ringWritePos,
             .ringHead = 0,
+            .segmentShift = layout.segmentShift,
             .ringFreeBlocks = null,
             .ringBlockPool = ringBlockPool,
             .ringNextUnclaimed = 0,
@@ -171,7 +171,7 @@ pub const MediumSievePrimes = struct {
 
     pub fn add(self: *MediumSievePrimes, sievePrime: SievePrime, bucketsStart: usize) void {
         const ringLen = self.ringWritePos.len;
-        const segmentsAhead = destinationOf(sievePrime, ringLen, bucketsStart);
+        const segmentsAhead = self.destinationOf(sievePrime, bucketsStart);
         if (segmentsAhead < ringLen) {
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
             self.storeSievingPrime(slot, sievePrime);
@@ -180,11 +180,10 @@ pub const MediumSievePrimes = struct {
         }
     }
 
-    fn destinationOf(sievePrime: SievePrime, ringLen: usize, bucketsStart: usize) usize {
-        _ = ringLen;
+    fn destinationOf(self: *const MediumSievePrimes, sievePrime: SievePrime, bucketsStart: usize) usize {
         std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
         const remaining = sievePrime.currentBucketIndex - bucketsStart;
-        return remaining / SEGMENT_ELEMS;
+        return remaining >> self.segmentShift;
     }
 
     fn freeBucket(self: *MediumSievePrimes, b: *Bucket) void {
@@ -226,7 +225,7 @@ pub const MediumSievePrimes = struct {
             const sievePrime = self.pending.items[self.pendingStart];
             std.debug.assert(sievePrime.currentBucketIndex >= bucketsStart);
             const remaining = sievePrime.currentBucketIndex - bucketsStart;
-            const segmentsAhead = remaining / SEGMENT_ELEMS;
+            const segmentsAhead = remaining >> self.segmentShift;
             if (segmentsAhead >= ringLen) break;
 
             const slot = (self.ringHead + segmentsAhead) & (ringLen - 1);
