@@ -44,42 +44,42 @@ inline fn applyCompactSievePrimeIntoSegment(
         break :blk rotations;
     };
 
-    const ROTATED_BITMASKS_PACKED: [Comptimes.ADMISSIBLE_RESIDUES.count]u64 = comptime blk: {
-        var packedMasks: [Comptimes.ADMISSIBLE_RESIDUES.count]u64 = undefined;
+    const ROTATED_BY_BIT: [Comptimes.ADMISSIBLE_RESIDUES.count][Comptimes.ADMISSIBLE_RESIDUES.count]Comptimes.WheelStep = comptime blk: {
+        var byBit: [Comptimes.ADMISSIBLE_RESIDUES.count][Comptimes.ADMISSIBLE_RESIDUES.count]Comptimes.WheelStep = undefined;
         for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |resumeAt| {
-            var p: u64 = 0;
             for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |stepIndex| {
-                p |= @as(u64, ROTATED_ACCUMULATED[resumeAt][stepIndex].bitMask) << @intCast(stepIndex * 8);
+                const step = ROTATED_ACCUMULATED[resumeAt][stepIndex];
+                byBit[resumeAt][@ctz(~step.bitMask)] = step;
             }
-            packedMasks[resumeAt] = p;
         }
-        break :blk packedMasks;
+        break :blk byBit;
     };
 
     const wheelStepIndex = entry.wheelStepIndex;
     const accumulatedWheelPattern = &ROTATED_ACCUMULATED[wheelStepIndex];
-    const bitMasksPacked: u64 = ROTATED_BITMASKS_PACKED[wheelStepIndex];
+    const byBit = &ROTATED_BY_BIT[wheelStepIndex];
 
-    var accumulatedBucketIndexAdvance: [Comptimes.ADMISSIBLE_RESIDUES.count + 1]usize = undefined;
-    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count + 1) |stepIndex| {
-        accumulatedBucketIndexAdvance[stepIndex] =
-            initialBucketIndex * accumulatedWheelPattern[stepIndex].divMultiplicator + accumulatedWheelPattern[stepIndex].residueAddend;
+    var bitAdvance: [Comptimes.ADMISSIBLE_RESIDUES.count]usize = undefined;
+    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |bit| {
+        bitAdvance[bit] = initialBucketIndex * byBit[bit].divMultiplicator + byBit[bit].residueAddend;
     }
+    const lastAdvance = initialBucketIndex * accumulatedWheelPattern[7].divMultiplicator + accumulatedWheelPattern[7].residueAddend;
+    const wheelAdvance = initialBucketIndex * accumulatedWheelPattern[8].divMultiplicator + accumulatedWheelPattern[8].residueAddend;
 
-    while (currentBucketIndex + accumulatedBucketIndexAdvance[7] < bucketCount) {
-        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |si| {
-            const mask: Types.SIEVE_BUCKET_TYPE = @truncate(bitMasksPacked >> (si * 8));
-            buckets[currentBucketIndex + accumulatedBucketIndexAdvance[si]] &= mask;
+    while (currentBucketIndex + lastAdvance < bucketCount) {
+        const window = buckets[currentBucketIndex..];
+        inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |bit| {
+            window[bitAdvance[bit]] &= ~@as(Types.SIEVE_BUCKET_TYPE, 1 << bit);
         }
-        currentBucketIndex += accumulatedBucketIndexAdvance[8];
+        currentBucketIndex += wheelAdvance;
     }
 
     inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-        if (currentBucketIndex + accumulatedBucketIndexAdvance[ari] < bucketCount) {
-            buckets[currentBucketIndex + accumulatedBucketIndexAdvance[ari]] &= accumulatedWheelPattern[ari].bitMask;
+        const index = currentBucketIndex + initialBucketIndex * accumulatedWheelPattern[ari].divMultiplicator + accumulatedWheelPattern[ari].residueAddend;
+        if (index < bucketCount) {
+            buckets[index] &= accumulatedWheelPattern[ari].bitMask;
         } else {
-            const rawExit = currentBucketIndex + accumulatedBucketIndexAdvance[ari];
-            const reduced = if (rawExit >= segmentElems) rawExit - segmentElems else rawExit;
+            const reduced = if (index >= segmentElems) index - segmentElems else index;
             entry.localOffset = @intCast(reduced);
             entry.wheelStepIndex = wheelStepIndex +% @as(u3, ari);
             return;
