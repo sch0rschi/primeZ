@@ -2,6 +2,7 @@ JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
 ZIG ?= zig
 REPEATS ?= 1
 ONLY ?=
+PRIMEZ_FLAGS ?=
 
 SMALL_START ?= 0
 SMALL_LIMIT ?= 70000000000
@@ -41,6 +42,7 @@ help:
 	@echo ""
 	@echo "  vars: ZIG=$(ZIG) (zig >= 0.17 binary used to build primez)"
 	@echo "        REPEATS=$(REPEATS) (best-of-N per scenario) ONLY=$(ONLY) (comma-separated scenario names)"
+	@echo "        PRIMEZ_FLAGS=$(PRIMEZ_FLAGS) (extra zig build flags for primez, e.g. -Dsegsz=512)"
 	@echo "        SMALL_START=$(SMALL_START) SMALL_LIMIT=$(SMALL_LIMIT)"
 	@echo "        BIG_START=$(BIG_START) BIG_LIMIT=$(BIG_LIMIT)"
 	@echo "        HIGH_START=$(HIGH_START) HIGH_LIMIT=$(HIGH_LIMIT)"
@@ -59,7 +61,7 @@ primesieve-build:
 primez-build:
 	@$(ZIG) version | awk -F. '{ if ($$1 == 0 && $$2 < 17) { print "error: $(ZIG) is zig " $$0 ", primeZ needs zig >= 0.17 - pass ZIG=/path/to/zig-0.17/zig"; exit 1 } }'
 	rm -rf $(ROOT)/zig-out $(ROOT)/.zig-cache
-	cd $(ROOT) && $(ZIG) build -Dcpu=native
+	cd $(ROOT) && $(ZIG) build -Dcpu=native $(PRIMEZ_FLAGS)
 
 bench: primez-build primesieve-build
 	@python3 $(SCRIPTS)/compare.py $(PRIMEZ_BIN) $(PRIMESIEVE_BIN) --repeats $(REPEATS) $(ONLY_ARGS) $(SCENARIO_ARGS)
