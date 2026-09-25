@@ -82,7 +82,7 @@ pub const SmallSegmentSievePrimes = struct {
         self.bucketFreeBlocks = b;
     }
 
-    fn addBucket(self: *SmallSegmentSievePrimes, sealedWritePos: ?[*]SievePrime) [*]SievePrime {
+    noinline fn addBucket(self: *SmallSegmentSievePrimes, sealedWritePos: ?[*]SievePrime) [*]SievePrime {
         const fresh = if (self.bucketFreeBlocks) |fb| blk: {
             self.bucketFreeBlocks = fb.next;
             break :blk fb;
@@ -221,26 +221,28 @@ pub const SmallSegmentSievePrimes = struct {
             currentBucketIndex += accumulatedBucketIndexAdvance[8];
         }
 
-        inline for (
-            0..Comptimes.ADMISSIBLE_RESIDUES.count,
-            accumulatedBucketIndexAdvance[0..Comptimes.ADMISSIBLE_RESIDUES.count],
-            accumulatedWheelPattern[0..Comptimes.ADMISSIBLE_RESIDUES.count],
-        ) |wsi, abia, ws| {
-            if (currentBucketIndex + abia < bucketCount) {
-                buckets[currentBucketIndex + abia] &= ws.bitMask;
-            } else {
-                const newWheelStepIndex = wheelStepIndex +% @as(u3, wsi);
-                const updated = SievePrime{
-                    .currentBucketIndex = currentBucketIndex + abia + bucketsStart,
-                    .initialBucketIndex = sievePrime.initialBucketIndex,
-                    .initialInBucketIndex = initialInBucketIndex,
-                    .wheelStepIndex = newWheelStepIndex,
-                };
-                self.storeInBucket(&nextSegmentGrid[initialInBucketIndex][newWheelStepIndex], updated);
-                return;
+        const exitStep: usize = blk: {
+            inline for (
+                0..Comptimes.ADMISSIBLE_RESIDUES.count,
+                accumulatedBucketIndexAdvance[0..Comptimes.ADMISSIBLE_RESIDUES.count],
+                accumulatedWheelPattern[0..Comptimes.ADMISSIBLE_RESIDUES.count],
+            ) |wsi, abia, ws| {
+                if (currentBucketIndex + abia < bucketCount) {
+                    buckets[currentBucketIndex + abia] &= ws.bitMask;
+                } else {
+                    break :blk wsi;
+                }
             }
-        } else {
             unreachable;
-        }
+        };
+
+        const newWheelStepIndex = wheelStepIndex +% @as(u3, @intCast(exitStep));
+        const updated = SievePrime{
+            .currentBucketIndex = currentBucketIndex + accumulatedBucketIndexAdvance[exitStep] + bucketsStart,
+            .initialBucketIndex = sievePrime.initialBucketIndex,
+            .initialInBucketIndex = initialInBucketIndex,
+            .wheelStepIndex = newWheelStepIndex,
+        };
+        self.storeInBucket(&nextSegmentGrid[initialInBucketIndex][newWheelStepIndex], updated);
     }
 };
