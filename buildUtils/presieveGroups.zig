@@ -1,14 +1,12 @@
-pub const FALLBACK_L1D_KIB = 32;
-pub const FALLBACK_VEC_LEN = 32;
-
 pub const FALLBACK_GROUPS = [_][]const usize{
-    &[_]usize{ 17, 73, 101 },
-    &[_]usize{ 31, 53, 97 },
-    &[_]usize{ 23, 37, 89 },
-    &[_]usize{ 43, 61, 83 },
-    &[_]usize{ 7, 13, 59, 79 },
-    &[_]usize{ 47, 67, 71 },
-    &[_]usize{ 11, 19, 29, 41 },
+    &[_]usize{ 7, 67, 71 },
+    &[_]usize{ 11, 41, 73 },
+    &[_]usize{ 13, 43, 59 },
+    &[_]usize{ 17, 37, 53 },
+    &[_]usize{ 19, 29, 61 },
+    &[_]usize{ 23, 31, 47 },
+    &[_]usize{ 79, 97 },
+    &[_]usize{ 83, 89 },
 };
 
 pub const GROUP_COUNT = FALLBACK_GROUPS.len;

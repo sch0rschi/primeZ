@@ -171,10 +171,8 @@ fn writeGroupsFile(b: *std.Build, name: []const u8, groups: []const []const usiz
 }
 
 fn solvePresieveGroups(b: *std.Build, profile: BuildProfile) ?std.Build.LazyPath {
-    const solve_enabled = b.option(bool, "presieve_solver", "Solve the build-optimal presieve groups for the build profile with presieveOpt's MILP (needs python3 and make; default: true). When false or unavailable, only the fallback presieve is built in.") orelse true;
+    const solve_enabled = b.option(bool, "presieve_solver", "Solve the build-optimal presieve groups for the build profile with presieveOpt's MILP (needs python3 and make; default: false). When false or unavailable, only the fallback presieve is built in.") orelse false;
     if (!solve_enabled) return null;
-
-    if (profile.l1dKiB == PresieveGroups.FALLBACK_L1D_KIB and profile.vecLen == PresieveGroups.FALLBACK_VEC_LEN) return null;
 
     if (b.graph.host.result.os.tag == .windows or b.findProgram(.{ .names = &.{"python3"} }) == null or b.findProgram(.{ .names = &.{"make"} }) == null) {
         std.debug.print("warning: python3 or make not available; only the fallback presieve is built in. Pass -Dpresieve_solver=false to silence this.\n", .{});

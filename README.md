@@ -56,23 +56,21 @@ zig build -Dl1cs=48 -Dl2cs=1024 -Dl3cs=16384
 ```
 
 At runtime the binary detects the actual cache sizes. If they match the
-build profile it uses the build-optimal presieve; otherwise it derives the
-layout from the detected caches and uses a fallback presieve tuned for the
-fallback profile. The segment size is chosen per query
+build profile it uses the build presieve; otherwise it derives the layout
+from the detected caches and uses the fallback presieve. The segment size is chosen per query
 (`clamp(2*sqrt(limit), L2/2, L3/4)`, as a power of two, at most 8 MiB), and
 the tier thresholds scale with it. `primez --print-layout <limit>` shows
 the decision; `--profile l1,l2,l3` emulates another machine and
 `--fallback` forces the fallback presieve. `-Dsegsz=<KiB>` pins the
 segment size for experiments.
 
-The binary carries two presieves. The build presieve's groups are solved
-during the build for the build profile's L1d size and SIMD width with
-presieveOpt's MILP (needs `python3` and `make`; the solve is cached). The
-fallback presieve uses groups solved once for 32 KiB L1d and AVX2 and
-hardcoded in `buildUtils/presieveGroups.zig`. When the build profile has the
-fallback's L1d size and SIMD width, or the solver is disabled
-(`-Dpresieve_solver=false`) or unavailable, only the fallback presieve is
-built in.
+The fallback presieve uses primesieve's groups (primes 7 to 97 in 8
+buffers of at most 32 KiB, about 200 KiB in total), hardcoded in
+`buildUtils/presieveGroups.zig`. They stay L2-resident on any CPU, and by
+default they are the only presieve built in. `-Dpresieve_solver=true`
+additionally builds a presieve whose groups are solved during the build for
+the build profile's L1d size and SIMD width with presieveOpt's MILP (needs
+`python3` and `make`; the solve is cached).
 
 ### Comparing against primesieve
 
