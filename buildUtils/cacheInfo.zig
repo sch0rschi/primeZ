@@ -28,10 +28,22 @@ pub fn detect() ?HardwareProfile {
 }
 
 fn detectLinux() ?HardwareProfile {
-    const linux = std.os.linux;
+    var best: ?HardwareProfile = null;
     var cpu: usize = 0;
-    if (linux.errno(linux.getcpu(&cpu, null)) != .SUCCESS) cpu = 0;
+    while (cpu < 4096) : (cpu += 1) {
+        const profile = linuxProfileOfCpu(cpu) orelse break;
+        if (best == null or isBiggerCore(profile, best.?)) best = profile;
+    }
+    return best;
+}
 
+fn isBiggerCore(a: HardwareProfile, b: HardwareProfile) bool {
+    if (a.l1dBytes != b.l1dBytes) return a.l1dBytes > b.l1dBytes;
+    if (a.l2Bytes != b.l2Bytes) return a.l2Bytes > b.l2Bytes;
+    return a.l3Bytes > b.l3Bytes;
+}
+
+fn linuxProfileOfCpu(cpu: usize) ?HardwareProfile {
     var profile = HardwareProfile{ .l1dBytes = 0, .l2Bytes = 0, .l3Bytes = 0 };
     var index: usize = 0;
     while (index < 16) : (index += 1) {
