@@ -25,3 +25,5 @@ pub const BUILD_PRESIEVE_IS_FALLBACK: bool = config.build_presieve_is_fallback;
 
 pub const PRESIEVE_GROUPS_BUILD: []const []const usize = if (BUILD_PRESIEVE_IS_FALLBACK) PRESIEVE_GROUPS_FALLBACK else PresieveGroups.parseGroups(@embedFile("presieve_groups_build"));
 pub const PRESIEVE_PATTERNS_BLOB_BUILD: []const u8 = if (BUILD_PRESIEVE_IS_FALLBACK) PRESIEVE_PATTERNS_BLOB_FALLBACK else @embedFile("presieve_patterns_build");
+
+pub const BUILD_TUNING: ?Tuning.Tuning = if (config.has_build_tuning) Tuning.Tuning.parseComptime(@embedFile("tuning_build")) else null;

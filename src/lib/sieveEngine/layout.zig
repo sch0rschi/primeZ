@@ -5,6 +5,7 @@ const Comptimes = @import("comptimes.zig");
 pub const CacheInfo = BuildUtils.CacheInfo;
 pub const HardwareProfile = CacheInfo.HardwareProfile;
 pub const Tuning = BuildUtils.Tuning.Tuning;
+pub const BUILD_TUNING: ?Tuning = BuildUtils.BUILD_TUNING;
 
 pub const PresieveKind = enum { build, fallback };
 
@@ -44,6 +45,7 @@ pub fn maxPrimeAdvancingAtMost(elems: usize) usize {
 comptime {
     if (MAX_SEGMENT_ELEMS * PRE_LARGE_SEGMENT_FACTOR / Comptimes.WHEEL_CIRCUMFERENCE >= 1 << 29) @compileError("preLarge primes must fit the ring entry's 29-bit initial bucket index");
     if (PRE_LARGE_SEGMENT_FACTOR * MIN_WHEEL_2310_STEP != Comptimes.WHEEL_CIRCUMFERENCE) @compileError("large tier needs every hit of a prime above preLargeThreshold to land at least one segment ahead");
+    if (BuildUtils.BUILD_TUNING) |tuning| tuning.validate() catch @compileError("invalid build tuning");
 }
 
 pub const BUILD_PROFILE = HardwareProfile.fromKiB(BuildUtils.BUILD_L1D_KIB, BuildUtils.BUILD_L2_KIB, BuildUtils.BUILD_L3_KIB);
@@ -150,7 +152,7 @@ pub fn segmentElemsForQueryTuned(profile: HardwareProfile, limit: usize, tuning:
     return std.math.clamp(wanted, bounds.lower, bounds.upper);
 }
 
-pub const TuningSource = enum { default, user, file, autotuned };
+pub const TuningSource = enum { default, build, user, file, autotuned };
 
 pub const Selection = struct {
     profile: HardwareProfile,
@@ -182,7 +184,9 @@ pub fn overrideSelection(selection: ?Selection) void {
 pub fn activeSelection() Selection {
     if (selectionOverride) |s| return s;
     if (cachedSelection) |s| return s;
-    const selection = untunedSelection();
+    const base = untunedSelection();
+    const onBuildProfile = base.profile.eql(BUILD_PROFILE);
+    const selection = if (onBuildProfile and BUILD_TUNING != null) base.withTuning(BUILD_TUNING.?, .build) else base;
     cachedSelection = selection;
     return selection;
 }

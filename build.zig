@@ -59,27 +59,62 @@ pub fn build(b: *std.Build) void {
         .fallback = computePreSievePatternsBlob(b, presieve_patterns_tool, presieve_groups_fallback),
     };
 
-    const options = b.addOptions();
-    options.addOption(usize, "build_l1d_kib", profile.l1dKiB);
-    options.addOption(usize, "build_l2_kib", profile.l2KiB);
-    options.addOption(usize, "build_l3_kib", profile.l3KiB);
-    options.addOption(usize, "pinned_segment_kib", pinned_segment_kib);
-    options.addOption(bool, "build_presieve_is_fallback", presieve_groups_build == null);
-    options.addOption(usize, GENERAL_PURPOSE_REGISTER_COUNT, general_purpose_register_count);
+    const config = Config{
+        .profile = profile,
+        .pinnedSegmentKiB = pinned_segment_kib,
+        .presieveIsFallback = presieve_groups_build == null,
+        .generalPurposeRegisterCount = general_purpose_register_count,
+    };
+    const untuned_options = config.addOptions(b, false);
 
-    const primeZ = b.addModule("primeZ", .{
-        .root_source_file = b.path("src/lib/root.zig"),
+    const tuning_file = b.option([]const u8, "tuning", "Embed a tuning file written by `zig build tune` or `primez --tune-out` (applied when the run-time cache sizes match the build profile).");
+    const autotune = b.option(bool, "autotune", "Run the self-tuner on this machine during the build and embed its result (needs a native build; default: false).") orelse false;
+    const tune_seconds = b.option([]const u8, "tune_seconds", "Target seconds per tuner measurement (default: 0.2). Higher is slower but less noisy.") orelse "0.2";
+    if (tuning_file != null and autotune) {
+        std.debug.print("error: pass either -Dtuning or -Dautotune, not both\n", .{});
+        std.process.exit(1);
+    }
+
+    const tuner_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "primeZ", .module = libraryModule(b, untuned_options, presieve_patterns, null, false) },
+        },
     });
-    primeZ.addOptions("primeZConfig", options);
-    wireBuildUtils(b, primeZ, options, presieve_patterns);
+    const tuner_exe = b.addExecutable(.{
+        .name = "primez-tuner",
+        .root_module = tuner_mod,
+    });
+
+    const tune_step = b.step("tune", "Run the self-tuner on this machine and write primez.tuning (embed it with -Dtuning=primez.tuning)");
+    const tune_run = addTunerRun(b, tuner_exe, tune_seconds);
+    tune_run.run.has_side_effects = true;
+    const tune_write = b.addUpdateSourceFiles();
+    tune_write.addCopyFileToSource(tune_run.output, "primez.tuning");
+    tune_step.dependOn(&tune_write.step);
+
+    const embedded_tuning: ?std.Build.LazyPath = if (tuning_file) |path|
+        (if (std.fs.path.isAbsolute(path)) std.Build.LazyPath{ .cwd_relative = path } else b.path(path))
+    else if (autotune) blk: {
+        if (!target.query.isNative()) {
+            std.debug.print("error: -Dautotune needs a native build; run `zig build tune` on the target machine and pass -Dtuning instead\n", .{});
+            std.process.exit(1);
+        }
+        break :blk addTunerRun(b, tuner_exe, tune_seconds).output;
+    } else null;
+
+    const options = if (embedded_tuning != null) config.addOptions(b, true) else untuned_options;
+    const primeZ = libraryModule(b, options, presieve_patterns, embedded_tuning, true);
 
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/lib/tests.zig"),
         .target = b.graph.host,
         .optimize = .debug,
     });
-    test_mod.addOptions("primeZConfig", options);
-    wireBuildUtils(b, test_mod, options, presieve_patterns);
+    test_mod.addOptions("primeZConfig", untuned_options);
+    wireBuildUtils(b, test_mod, untuned_options, presieve_patterns, null);
 
     const unit_tests = b.addTest(.{
         .root_module = test_mod,
@@ -104,6 +139,42 @@ pub fn build(b: *std.Build) void {
         .root_module = cli_mod,
     });
     b.installArtifact(cli_exe);
+}
+
+const Config = struct {
+    profile: BuildProfile,
+    pinnedSegmentKiB: usize,
+    presieveIsFallback: bool,
+    generalPurposeRegisterCount: usize,
+
+    fn addOptions(self: Config, b: *std.Build, hasBuildTuning: bool) *std.Build.Step.Options {
+        const options = b.addOptions();
+        options.addOption(usize, "build_l1d_kib", self.profile.l1dKiB);
+        options.addOption(usize, "build_l2_kib", self.profile.l2KiB);
+        options.addOption(usize, "build_l3_kib", self.profile.l3KiB);
+        options.addOption(usize, "pinned_segment_kib", self.pinnedSegmentKiB);
+        options.addOption(bool, "build_presieve_is_fallback", self.presieveIsFallback);
+        options.addOption(usize, GENERAL_PURPOSE_REGISTER_COUNT, self.generalPurposeRegisterCount);
+        options.addOption(bool, "has_build_tuning", hasBuildTuning);
+        return options;
+    }
+};
+
+
+fn addTunerRun(b: *std.Build, tuner: *std.Build.Step.Compile, tuneSeconds: []const u8) struct { run: *std.Build.Step.Run, output: std.Build.LazyPath } {
+    const run = b.addRunArtifact(tuner);
+    run.setName(b.fmt("self-tune primez ({s}s per measurement)", .{tuneSeconds}));
+    run.addArgs(&.{ "--tune-seconds", tuneSeconds, "--tune-out" });
+    const output = run.addOutputFileArg("primez.tuning");
+    return .{ .run = run, .output = output };
+}
+
+fn libraryModule(b: *std.Build, options: *std.Build.Step.Options, presievePatterns: PresievePatterns, tuning: ?std.Build.LazyPath, public: bool) *std.Build.Module {
+    const module_options: std.Build.Module.CreateOptions = .{ .root_source_file = b.path("src/lib/root.zig") };
+    const lib = if (public) b.addModule("primeZ", module_options) else b.createModule(module_options);
+    lib.addOptions("primeZConfig", options);
+    wireBuildUtils(b, lib, options, presievePatterns, tuning);
+    return lib;
 }
 
 fn resolveBuildProfile(b: *std.Build, target: std.Build.ResolvedTarget) BuildProfile {
@@ -210,7 +281,7 @@ fn solvePresieveGroups(b: *std.Build, profile: BuildProfile) ?std.Build.LazyPath
     return groups;
 }
 
-fn wireBuildUtils(b: *std.Build, lib: *std.Build.Module, options: *std.Build.Step.Options, presievePatterns: PresievePatterns) void {
+fn wireBuildUtils(b: *std.Build, lib: *std.Build.Module, options: *std.Build.Step.Options, presievePatterns: PresievePatterns, tuning: ?std.Build.LazyPath) void {
     const buildUtils = b.createModule(.{
         .root_source_file = b.path("buildUtils/sieveLayout.zig"),
     });
@@ -218,6 +289,7 @@ fn wireBuildUtils(b: *std.Build, lib: *std.Build.Module, options: *std.Build.Ste
     if (presievePatterns.buildGroups) |groups| buildUtils.addAnonymousImport("presieve_groups_build", .{ .root_source_file = groups });
     if (presievePatterns.build) |patterns| buildUtils.addAnonymousImport("presieve_patterns_build", .{ .root_source_file = patterns });
     buildUtils.addAnonymousImport("presieve_patterns_fallback", .{ .root_source_file = presievePatterns.fallback });
+    if (tuning) |t| buildUtils.addAnonymousImport("tuning_build", .{ .root_source_file = t });
     lib.addImport("buildUtils", buildUtils);
 }
 
