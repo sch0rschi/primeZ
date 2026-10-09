@@ -13,6 +13,7 @@ pub const Options = struct {
     maxPasses: usize = 6,
     minGain: f64 = 0.01,
     minPassGain: f64 = 0.01,
+    start: Tuning = Tuning.DEFAULT,
     verbose: bool = true,
 };
 
@@ -298,7 +299,12 @@ pub fn tune(allocator: std.mem.Allocator, io: std.Io, selection: Selection, opti
     try tuner.calibrate();
 
     const axes = comptime std.enums.values(Axis);
-    var current = Tuning.DEFAULT;
+    var current = options.start;
+    if (!current.eql(Tuning.DEFAULT)) {
+        tuner.log("starting from:", .{});
+        for (axes) |axis| tuner.log(" {t}={f}", .{ axis, valueOf(axis, current) });
+        tuner.log("\n", .{});
+    }
     var changes: usize = 0;
     var testedAtChange: [axes.len]?usize = @splat(null);
     var held: [axes.len]Candidates = @splat(.{});
@@ -337,16 +343,23 @@ pub fn tune(allocator: std.mem.Allocator, io: std.Io, selection: Selection, opti
         }
     } else tuner.log("stopped after {d} passes without stagnating\n", .{options.maxPasses});
 
-    var finalCosts: [2]f64 = undefined;
-    const finalists = [_]Tuning{ Tuning.DEFAULT, current };
+    const finalists = [_]Tuning{ Tuning.DEFAULT, options.start, current };
+    const labels = [_][]const u8{ "default", "start", "tuned" };
+    var finalCosts: [finalists.len]f64 = undefined;
     tuner.log("verifying\n", .{});
     try tuner.evaluate(&finalists, &finalCosts, options.repeats + 2);
-    const keep = !current.eql(Tuning.DEFAULT) and finalCosts[1] < finalCosts[0] * (1 - options.minGain);
-    tuner.log("default {d:.3}, tuned {d:.3}{s}\n", .{ finalCosts[0], finalCosts[1], if (keep) "" else " - keeping the defaults" });
+
+    var best: usize = 0;
+    for (finalists[1..], finalCosts[1..], 1..) |candidate, cost, i| {
+        if (!candidate.eql(finalists[best]) and cost < finalCosts[best] * (1 - options.minGain)) best = i;
+    }
+    for (labels, finalCosts, 0..) |label, cost, i| {
+        if (i == 0 or !finalists[i].eql(finalists[i - 1])) tuner.log("  {s:<8} {d:.3}{s}\n", .{ label, cost, if (i == best) " <- kept" else "" });
+    }
     return .{
-        .tuning = if (keep) current else Tuning.DEFAULT,
+        .tuning = finalists[best],
         .defaultCost = finalCosts[0],
-        .tunedCost = if (keep) finalCosts[1] else finalCosts[0],
+        .tunedCost = finalCosts[best],
     };
 }
 

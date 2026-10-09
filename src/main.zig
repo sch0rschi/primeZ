@@ -172,6 +172,18 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("error: no HOME/XDG_CONFIG_HOME/PRIMEZ_TUNING_DIR to save the tuning in; pass --tune-out <file> or --tune-out - for stdout\n", .{});
             return error.NoTuningDirectory;
         };
+        if (noTuning) {
+            tuneOptions.start = LayoutMod.Tuning.DEFAULT;
+        } else if (tuningPath) |path| {
+            tuneOptions.start = try loadTuning(allocator, io, path);
+            std.debug.print("Starting from {s}\n", .{path});
+        } else if (if (userPath) |path| loadUserTuning(allocator, io, path) else null) |tuning| {
+            tuneOptions.start = tuning;
+            std.debug.print("Starting from {s}\n", .{userPath.?});
+        } else if (LayoutMod.BUILD_TUNING != null and selection.profile.eql(LayoutMod.BUILD_PROFILE)) {
+            tuneOptions.start = LayoutMod.BUILD_TUNING.?;
+            std.debug.print("Starting from the build tuning\n", .{});
+        }
         return runTuner(allocator, io, selection, tuneOptions, outPath);
     }
     if (noTuning) {
