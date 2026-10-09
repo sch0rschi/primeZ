@@ -25,6 +25,26 @@ fn printLayout(label: []const u8, layout: LayoutMod.Layout) void {
     });
 }
 
+fn printTuning(selection: LayoutMod.Selection) void {
+    std.debug.print("Tuning = {t}", .{selection.tuningSource});
+    inline for (@typeInfo(LayoutMod.Tuning).@"struct".field_names) |name| {
+        const value = @field(selection.tuning, name);
+        if (value != @field(LayoutMod.Tuning.DEFAULT, name)) {
+            if (@TypeOf(value) == usize) std.debug.print(" {s}={d}", .{ name, value }) else std.debug.print(" {s}={t}", .{ name, value });
+        }
+    }
+    std.debug.print("\n", .{});
+}
+
+fn loadTuning(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !LayoutMod.Tuning {
+    const text = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1 << 16));
+    defer allocator.free(text);
+    return LayoutMod.Tuning.parse(text) catch |err| {
+        std.debug.print("error: {s}: {t}\n", .{ path, err });
+        return err;
+    };
+}
+
 fn parseProfile(text: []const u8) !LayoutMod.HardwareProfile {
     var fields = std.mem.tokenizeScalar(u8, text, ',');
     const l1 = try std.fmt.parseInt(usize, fields.next() orelse return error.InvalidProfile, 10);
@@ -44,6 +64,8 @@ pub fn main(init: std.process.Init) !void {
     var printOnly = false;
     var forceFallback = false;
     var emulated: ?LayoutMod.HardwareProfile = null;
+    var tuningPath: ?[]const u8 = null;
+    var noTuning = false;
     var positional: [2]usize = undefined;
     var positionalCount: usize = 0;
     while (argIter.next()) |arg| {
@@ -53,6 +75,10 @@ pub fn main(init: std.process.Init) !void {
             forceFallback = true;
         } else if (std.mem.eql(u8, arg, "--profile")) {
             emulated = try parseProfile(argIter.next() orelse return error.MissingProfile);
+        } else if (std.mem.eql(u8, arg, "--tuning")) {
+            tuningPath = argIter.next() orelse return error.MissingTuningPath;
+        } else if (std.mem.eql(u8, arg, "--no-tuning")) {
+            noTuning = true;
         } else {
             if (positionalCount == positional.len) return error.TooManyArguments;
             positional[positionalCount] = try std.fmt.parseInt(usize, arg, 10);
@@ -79,6 +105,11 @@ pub fn main(init: std.process.Init) !void {
             .detected = selection.detected,
         };
     }
+    if (noTuning) {
+        selection = selection.withTuning(LayoutMod.Tuning.DEFAULT, .default);
+    } else if (tuningPath) |path| {
+        selection = selection.withTuning(try loadTuning(allocator, io, path), .file);
+    }
     if (forceFallback) selection.presieve = .fallback;
     LayoutMod.overrideSelection(selection);
 
@@ -95,6 +126,7 @@ pub fn main(init: std.process.Init) !void {
         inline for (P.GROUP_LIST) |group| std.debug.print(" {any}", .{group});
         std.debug.print("\n", .{});
     }
+    printTuning(selection);
     printLayout("Query", layouts.query);
     printLayout("Self-sieve", layouts.selfSieve);
     std.debug.print("Threads = 1\n", .{});

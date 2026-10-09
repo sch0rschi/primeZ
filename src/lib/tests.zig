@@ -362,13 +362,63 @@ test "divCeil matches exact ceiling division, including near the top of u64" {
     }
 }
 
-test "layouts keep every tier within the primes it can handle" {
-    const strides = [_]usize{ 8, 1024, 48 * 1024, 512 * 1024, LayoutMod.MAX_SEGMENT_ELEMS };
-    var segmentElems: usize = LayoutMod.MIN_PINNED_SEGMENT_ELEMS;
-    while (segmentElems <= LayoutMod.MAX_SEGMENT_ELEMS) : (segmentElems *= 2) {
-        for (strides) |l1| for (strides) |l2| {
-            try std.testing.expect(LayoutMod.Layout.pinned(segmentElems, l1, l2, .fallback).isSound());
-        };
+test "piSieveCounting agrees across tuning extremes" {
+    const allocator = std.testing.allocator;
+    const hw = LayoutMod.HardwareProfile.fromKiB(32, 256, 1024);
+    const tunings = [_]LayoutMod.Tuning{
+        .{ .smallL1StrideDivisor = 2, .smallL2StrideDivisor = 2, .smallSegmentPercent = 200, .mediumSegmentFactor = 12 },
+        .{ .smallL1StrideDivisor = 16, .smallL2StrideDivisor = 16, .smallSegmentPercent = 25, .mediumSegmentFactor = 2 },
+        .{ .smallSegmentPercent = 10, .mediumSegmentFactor = 1 },
+        .{ .smallSegmentPercent = 400, .mediumSegmentFactor = 64 },
+        .{ .segmentMinKiB = 16, .segmentMaxKiB = 16, .l1StrideKiB = 1, .l2StrideKiB = 2, .presieve = .fallback },
+        .{ .segmentMinKiB = 512, .segmentMaxKiB = 512, .l1StrideKiB = 64, .l2StrideKiB = 1024, .presieve = .build },
+        .{ .segmentMinKiB = 16, .segmentMaxKiB = 16, .l1StrideKiB = 16, .l2StrideKiB = 16, .smallL1StrideDivisor = 1, .smallL2StrideDivisor = 1, .smallSegmentPercent = 10, .mediumSegmentFactor = 1 },
+    };
+    const ranges = [_][2]usize{
+        .{ 0, 10_000_000 },
+        .{ 999_000_000, 1_000_000_000 },
+        .{ 999_999_000_000, 1_000_000_000_000 },
+        .{ 99_999_999_000_000, 100_000_000_000_000 },
+    };
+    const base = LayoutMod.Selection{ .profile = hw, .presieve = .build, .detected = null };
+    for (tunings) |tuning| {
+        try tuning.validate();
+        const selection = base.withTuning(tuning, .file);
+        for (ranges) |range| try expectLayoutsAgree(allocator, LayoutMod.QueryLayouts.forSelection(selection, range[1]), range[0], range[1]);
+    }
+}
+
+test "tuning files round-trip" {
+    const tuning = LayoutMod.Tuning{ .segmentMaxKiB = 2048, .l2StrideKiB = 384, .smallL1StrideDivisor = 3, .mediumSegmentFactor = 8, .presieve = .fallback };
+    var buffer: [1024]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+    try tuning.write(&writer);
+    try std.testing.expect(tuning.eql(try LayoutMod.Tuning.parse(writer.buffered())));
+    try std.testing.expect(LayoutMod.Tuning.DEFAULT.eql(try LayoutMod.Tuning.parse("# only a comment\n\n")));
+    try std.testing.expectError(error.UnknownKey, LayoutMod.Tuning.parse("segmentSize = 1\n"));
+    try std.testing.expectError(error.OutOfRange, LayoutMod.Tuning.parse("segmentMaxKiB = 3\n"));
+}
+
+test "tuned layouts keep every tier within the primes it can handle" {
+    const profiles = [_]LayoutMod.HardwareProfile{
+        LayoutMod.HardwareProfile.fromKiB(32, 256, 0),
+        LayoutMod.HardwareProfile.fromKiB(48, 1024, 32 * 1024),
+        LayoutMod.HardwareProfile.fromKiB(128, 16 * 1024, 64 * 1024),
+    };
+    const strideKiBs = [_]usize{ 0, 1, 8, 64, 1024, LayoutMod.Tuning.MAX_SEGMENT_KIB };
+    const divisors = [_]usize{ 1, 2, 5, 64 };
+    const percents = [_]usize{ 10, 100, 400 };
+    const factors = [_]usize{ 1, 5, 64 };
+    for (profiles) |hw| {
+        var segmentKiB: usize = LayoutMod.Tuning.MIN_SEGMENT_KIB;
+        while (segmentKiB <= LayoutMod.Tuning.MAX_SEGMENT_KIB) : (segmentKiB *= 2) {
+            for (strideKiBs) |l1| for (strideKiBs) |l2| for (divisors) |d| for (percents) |pct| for (factors) |f| {
+                const tuning = LayoutMod.Tuning{ .segmentMinKiB = segmentKiB, .segmentMaxKiB = segmentKiB, .l1StrideKiB = l1, .l2StrideKiB = l2, .smallL1StrideDivisor = d, .smallL2StrideDivisor = d, .smallSegmentPercent = pct, .mediumSegmentFactor = f };
+                try tuning.validate();
+                const layout = LayoutMod.Layout.forQueryTuned(hw, 1_000_000_000_000, .fallback, tuning);
+                try std.testing.expect(layout.isSound());
+            };
+        }
     }
     try std.testing.expect(LayoutMod.maxWheel30Advance(LayoutMod.maxPrimeAdvancingAtMost(4096)) <= 4096);
     try std.testing.expect(LayoutMod.maxWheel30Advance(LayoutMod.maxPrimeAdvancingAtMost(4096) + 1) > 4096);

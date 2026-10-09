@@ -6,6 +6,8 @@ pub const PresieveGroups = @import("presieveGroups.zig");
 
 pub const CacheInfo = @import("cacheInfo.zig");
 
+pub const Tuning = @import("tuning.zig");
+
 pub const RESIDUE_CLASS_COUNT = WheelShape.RESIDUE_CLASS_COUNT;
 
 pub const GENERAL_PURPOSE_REGISTER_COUNT: usize = config.general_purpose_register_count;
