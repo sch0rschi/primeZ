@@ -99,6 +99,7 @@ pub const SmallStrideSievePrimes = struct {
     strideElems: usize,
 
     pub fn init(allocator: std.mem.Allocator, segmentElems: usize, strideElems: usize, minPrimeExclusive: usize, maxPrime: usize) !SmallStrideSievePrimes {
+        std.debug.assert(LayoutMod.maxWheel30Advance(maxPrime) <= segmentElems);
         const capacity: usize = @intCast(Estimates.primeCountInRangeUpperBound(minPrimeExclusive, maxPrime));
         var pending: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(SievePrime) = undefined;
         var active: [Comptimes.ADMISSIBLE_RESIDUES.count]std.ArrayList(CompactSievePrime) = undefined;

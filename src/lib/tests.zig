@@ -361,3 +361,15 @@ test "divCeil matches exact ceiling division, including near the top of u64" {
         try std.testing.expectEqual(@as(u64, @intCast((@as(u128, a) + b - 1) / b)), Utils.divCeil(a, b));
     }
 }
+
+test "layouts keep every tier within the primes it can handle" {
+    const strides = [_]usize{ 8, 1024, 48 * 1024, 512 * 1024, LayoutMod.MAX_SEGMENT_ELEMS };
+    var segmentElems: usize = LayoutMod.MIN_PINNED_SEGMENT_ELEMS;
+    while (segmentElems <= LayoutMod.MAX_SEGMENT_ELEMS) : (segmentElems *= 2) {
+        for (strides) |l1| for (strides) |l2| {
+            try std.testing.expect(LayoutMod.Layout.pinned(segmentElems, l1, l2, .fallback).isSound());
+        };
+    }
+    try std.testing.expect(LayoutMod.maxWheel30Advance(LayoutMod.maxPrimeAdvancingAtMost(4096)) <= 4096);
+    try std.testing.expect(LayoutMod.maxWheel30Advance(LayoutMod.maxPrimeAdvancingAtMost(4096) + 1) > 4096);
+}

@@ -27,7 +27,25 @@ const MIN_WHEEL_2310_STEP: usize = blk: {
     break :blk m;
 };
 
+const MAX_WHEEL_30_STEP: usize = blk: {
+    var m: usize = 0;
+    for (Comptimes.WHEEL_PATTERNS) |row| {
+        for (row) |step| m = @max(m, @as(usize, step.divMultiplicator) + @as(usize, step.residueAddend));
+    }
+    break :blk m;
+};
+
+pub fn maxWheel30Advance(prime: usize) usize {
+    return (prime / Comptimes.WHEEL_CIRCUMFERENCE) * MAX_WHEEL_30_STEP + MAX_WHEEL_30_STEP;
+}
+
+pub fn maxPrimeAdvancingAtMost(elems: usize) usize {
+    if (elems < 2 * MAX_WHEEL_30_STEP) return 0;
+    return (elems / MAX_WHEEL_30_STEP - 1) * Comptimes.WHEEL_CIRCUMFERENCE + Comptimes.WHEEL_CIRCUMFERENCE - 1;
+}
+
 comptime {
+    if (MAX_SEGMENT_ELEMS * PRE_LARGE_SEGMENT_FACTOR / Comptimes.WHEEL_CIRCUMFERENCE >= 1 << 29) @compileError("preLarge primes must fit the ring entry's 29-bit initial bucket index");
     if (PRE_LARGE_SEGMENT_FACTOR * MIN_WHEEL_2310_STEP != Comptimes.WHEEL_CIRCUMFERENCE) @compileError("large tier needs every hit of a prime above preLargeThreshold to land at least one segment ahead");
     if (PRE_LARGE_SEGMENT_FACTOR < MEDIUM_SEGMENT_FACTOR) @compileError("preLarge threshold must not be below the medium threshold");
 }
@@ -52,10 +70,11 @@ pub const Layout = struct {
         const l1Stride = std.mem.alignBackward(usize, @min(l1StrideElems, segmentElems), 8);
         std.debug.assert(l1Stride >= 8);
         const l2Stride = std.mem.alignBackward(usize, std.math.clamp(l2StrideElems, l1Stride, segmentElems), 8);
-        const smallL1StrideThreshold = l1Stride / SMALL_L1_STRIDE_DIVISOR;
-        const smallL2StrideThreshold = @max(l2Stride / SMALL_L2_STRIDE_DIVISOR, smallL1StrideThreshold);
+        const smallStrideCap = maxPrimeAdvancingAtMost(segmentElems);
+        const smallL1StrideThreshold = @min(l1Stride / SMALL_L1_STRIDE_DIVISOR, smallStrideCap);
+        const smallL2StrideThreshold = @min(@max(l2Stride / SMALL_L2_STRIDE_DIVISOR, smallL1StrideThreshold), smallStrideCap);
         const smallSegmentThreshold = @max(segmentElems * SMALL_SEGMENT_SEGMENT_FACTOR, smallL2StrideThreshold);
-        return .{
+        const layout: Layout = .{
             .segmentElems = segmentElems,
             .segmentShift = std.math.log2_int(usize, segmentElems),
             .l1StrideElems = l1Stride,
@@ -67,6 +86,20 @@ pub const Layout = struct {
             .preLargeThreshold = segmentElems * PRE_LARGE_SEGMENT_FACTOR,
             .presieve = presieve,
         };
+        std.debug.assert(layout.isSound());
+        return layout;
+    }
+
+    pub fn isSound(self: Layout) bool {
+        return std.math.isPowerOfTwo(self.segmentElems) and
+            self.segmentElems >= MIN_PINNED_SEGMENT_ELEMS and self.segmentElems <= MAX_SEGMENT_ELEMS and
+            self.l1StrideElems >= 8 and self.l1StrideElems <= self.l2StrideElems and self.l2StrideElems <= self.segmentElems and
+            self.smallL1StrideThreshold <= self.smallL2StrideThreshold and
+            self.smallL2StrideThreshold <= self.smallSegmentThreshold and
+            self.smallSegmentThreshold <= self.mediumThreshold and
+            self.mediumThreshold <= self.preLargeThreshold and
+            self.preLargeThreshold == self.segmentElems * PRE_LARGE_SEGMENT_FACTOR and
+            maxWheel30Advance(self.smallL2StrideThreshold) <= self.segmentElems;
     }
 
     pub fn forQuery(profile: HardwareProfile, limit: usize, presieve: PresieveKind) Layout {
