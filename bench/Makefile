@@ -3,6 +3,8 @@ ZIG ?= zig
 REPEATS ?= 1
 ONLY ?=
 PRIMEZ_FLAGS ?=
+TUNE ?= 1
+TUNE_SECONDS ?= 0.2
 
 SMALL_START ?= 0
 SMALL_LIMIT ?= 70000000000
@@ -21,6 +23,7 @@ PRIMESIEVE_DIR := $(HERE)/primesieve
 PRIMESIEVE_BUILD := $(PRIMESIEVE_DIR)/build
 PRIMESIEVE_BIN := $(PRIMESIEVE_BUILD)/primesieve
 PRIMEZ_BIN := $(ROOT)/zig-out/bin/primez
+TUNING_DIR := $(HERE)/results/tuning
 
 SCENARIO_ARGS := \
 	small $(SMALL_START) $(SMALL_LIMIT) \
@@ -30,19 +33,21 @@ SCENARIO_ARGS := \
 
 ONLY_ARGS := $(if $(ONLY),--only $(ONLY),)
 
-.PHONY: help all bench primesieve-build primez-build clean distclean
+.PHONY: help all bench tune primesieve-build primez-build clean distclean
 .NOTPARALLEL:
 
 help:
 	@echo "primeZ vs. primesieve benchmark: small limit, big limit, high offset, extreme offset"
 	@echo ""
-	@echo "  make bench    build both and print the runtime comparison table"
+	@echo "  make bench    build both, self-tune primez, and print the runtime comparison table"
+	@echo "  make tune     build and self-tune primez only (the tuning lands in bench/results/tuning)"
 	@echo "  make clean    remove build outputs"
 	@echo "  make distclean also remove the primesieve build tree"
 	@echo ""
 	@echo "  vars: ZIG=$(ZIG) (zig >= 0.17 binary used to build primez)"
 	@echo "        REPEATS=$(REPEATS) (best-of-N per scenario) ONLY=$(ONLY) (comma-separated scenario names)"
 	@echo "        PRIMEZ_FLAGS=$(PRIMEZ_FLAGS) (extra zig build flags for primez, e.g. -Dsegsz=512)"
+	@echo "        TUNE=$(TUNE) (0 benches primez untuned) TUNE_SECONDS=$(TUNE_SECONDS) (per tuner measurement)"
 	@echo "        SMALL_START=$(SMALL_START) SMALL_LIMIT=$(SMALL_LIMIT)"
 	@echo "        BIG_START=$(BIG_START) BIG_LIMIT=$(BIG_LIMIT)"
 	@echo "        HIGH_START=$(HIGH_START) HIGH_LIMIT=$(HIGH_LIMIT)"
@@ -63,8 +68,16 @@ primez-build:
 	rm -rf $(ROOT)/zig-out $(ROOT)/.zig-cache
 	cd $(ROOT) && $(ZIG) build -Dcpu=native $(PRIMEZ_FLAGS)
 
-bench: primez-build primesieve-build
-	@python3 $(SCRIPTS)/compare.py $(PRIMEZ_BIN) $(PRIMESIEVE_BIN) --repeats $(REPEATS) $(ONLY_ARGS) $(SCENARIO_ARGS)
+tune: primez-build
+	rm -rf $(TUNING_DIR)
+	mkdir -p $(TUNING_DIR)
+ifeq ($(TUNE),1)
+	PRIMEZ_TUNING_DIR=$(TUNING_DIR) $(PRIMEZ_BIN) --tune --tune-seconds $(TUNE_SECONDS)
+	@cat $(TUNING_DIR)/*
+endif
+
+bench: primesieve-build tune
+	@PRIMEZ_TUNING_DIR=$(TUNING_DIR) python3 $(SCRIPTS)/compare.py $(PRIMEZ_BIN) $(PRIMESIEVE_BIN) --repeats $(REPEATS) $(ONLY_ARGS) $(SCENARIO_ARGS)
 
 clean:
 	rm -rf $(ROOT)/zig-out $(ROOT)/.zig-cache

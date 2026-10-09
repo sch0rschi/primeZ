@@ -119,6 +119,12 @@ implementations before its timing is reported. See `bench/Makefile` for
 the scenario bounds and other variables (`REPEATS` for best-of-N timing,
 `ONLY` to run a subset of scenarios).
 
+Before timing anything, `make bench` self-tunes the freshly built primez
+(`primez --tune`). The tuning is kept in `bench/results/tuning`, so a
+tuning in your home directory has no effect on the bench. `TUNE=0`
+benches the untuned defaults, and `TUNE_SECONDS` sets the length of each
+tuner measurement. `make -C bench tune` runs only the build and tuning.
+
 ------------------------------------------------------------------------
 
 ## License
