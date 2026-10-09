@@ -90,6 +90,10 @@ caches automatically.
 - `--tune-out <file|->` saves the result elsewhere or prints it.
 - `--tuning <file>` loads a specific file.
 - `--no-tuning` ignores all tunings.
+- `--tune` starts from an existing tuning: the `--tuning` file, the saved
+  file for this machine, or a baked-in tuning, in that order; with
+  `--no-tuning` it starts from the defaults. The result replaces the
+  starting tuning only if it is confirmed faster.
 
 To bake a tuning into the binary, use `zig build tune` followed by
 `zig build -Dtuning=primez.tuning`, or tune during the build with
@@ -121,9 +125,11 @@ the scenario bounds and other variables (`REPEATS` for best-of-N timing,
 
 Before timing anything, `make bench` self-tunes the freshly built primez
 (`primez --tune`). The tuning is kept in `bench/results/tuning`, so a
-tuning in your home directory has no effect on the bench. `TUNE=0`
-benches the untuned defaults, and `TUNE_SECONDS` sets the length of each
-tuner measurement. `make -C bench tune` runs only the build and tuning.
+tuning in your home directory has no effect on the bench. Each run starts
+from the previous run's tuning; `TUNE_FRESH=1` discards it and starts from
+the defaults. `TUNE=0` benches the untuned defaults, and `TUNE_SECONDS`
+sets the length of each tuner measurement. `make -C bench tune` runs only
+the build and tuning.
 
 ------------------------------------------------------------------------
 

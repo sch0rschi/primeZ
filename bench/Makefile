@@ -5,6 +5,7 @@ ONLY ?=
 PRIMEZ_FLAGS ?=
 TUNE ?= 1
 TUNE_SECONDS ?= 0.2
+TUNE_FRESH ?= 0
 
 SMALL_START ?= 0
 SMALL_LIMIT ?= 70000000000
@@ -24,6 +25,8 @@ PRIMESIEVE_BUILD := $(PRIMESIEVE_DIR)/build
 PRIMESIEVE_BIN := $(PRIMESIEVE_BUILD)/primesieve
 PRIMEZ_BIN := $(ROOT)/zig-out/bin/primez
 TUNING_DIR := $(HERE)/results/tuning
+UNTUNED_DIR := $(HERE)/results/untuned
+BENCH_TUNING_DIR := $(if $(filter 1,$(TUNE)),$(TUNING_DIR),$(UNTUNED_DIR))
 
 SCENARIO_ARGS := \
 	small $(SMALL_START) $(SMALL_LIMIT) \
@@ -48,6 +51,7 @@ help:
 	@echo "        REPEATS=$(REPEATS) (best-of-N per scenario) ONLY=$(ONLY) (comma-separated scenario names)"
 	@echo "        PRIMEZ_FLAGS=$(PRIMEZ_FLAGS) (extra zig build flags for primez, e.g. -Dsegsz=512)"
 	@echo "        TUNE=$(TUNE) (0 benches primez untuned) TUNE_SECONDS=$(TUNE_SECONDS) (per tuner measurement)"
+	@echo "        TUNE_FRESH=$(TUNE_FRESH) (1 discards the previous tuning instead of starting from it)"
 	@echo "        SMALL_START=$(SMALL_START) SMALL_LIMIT=$(SMALL_LIMIT)"
 	@echo "        BIG_START=$(BIG_START) BIG_LIMIT=$(BIG_LIMIT)"
 	@echo "        HIGH_START=$(HIGH_START) HIGH_LIMIT=$(HIGH_LIMIT)"
@@ -69,15 +73,17 @@ primez-build:
 	cd $(ROOT) && $(ZIG) build -Dcpu=native $(PRIMEZ_FLAGS)
 
 tune: primez-build
+ifeq ($(TUNE_FRESH),1)
 	rm -rf $(TUNING_DIR)
-	mkdir -p $(TUNING_DIR)
+endif
+	mkdir -p $(TUNING_DIR) $(UNTUNED_DIR)
 ifeq ($(TUNE),1)
 	PRIMEZ_TUNING_DIR=$(TUNING_DIR) $(PRIMEZ_BIN) --tune --tune-seconds $(TUNE_SECONDS)
 	@cat $(TUNING_DIR)/*
 endif
 
 bench: primesieve-build tune
-	@PRIMEZ_TUNING_DIR=$(TUNING_DIR) python3 $(SCRIPTS)/compare.py $(PRIMEZ_BIN) $(PRIMESIEVE_BIN) --repeats $(REPEATS) $(ONLY_ARGS) $(SCENARIO_ARGS)
+	@PRIMEZ_TUNING_DIR=$(BENCH_TUNING_DIR) python3 $(SCRIPTS)/compare.py $(PRIMEZ_BIN) $(PRIMESIEVE_BIN) --repeats $(REPEATS) $(ONLY_ARGS) $(SCENARIO_ARGS)
 
 clean:
 	rm -rf $(ROOT)/zig-out $(ROOT)/.zig-cache
