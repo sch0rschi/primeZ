@@ -72,6 +72,34 @@ additionally builds a presieve whose groups are solved during the build for
 the build profile's L1d size and SIMD width with presieveOpt's MILP (needs
 `python3` and `make`; the solve is cached).
 
+### Self-tuning
+
+The segment bounds, stride sizes, tier divisors and presieve choice can be
+tuned on the machine itself. Run this on an otherwise idle machine:
+
+``` sh
+primez --tune                  # a few minutes; saves the result per user
+```
+
+The result goes to `~/.config/primez/tuning-<L1>-<L2>-<L3>.txt`, or under
+`$XDG_CONFIG_HOME`, `%APPDATA%` on Windows, or `$PRIMEZ_TUNING_DIR`. The
+file name carries the cache sizes, so machines that share a home directory
+keep separate results. Every later run loads the file for its detected
+caches automatically.
+- `--tune-seconds <s>` and `--tune-repeats <n>` trade tuning time for noise.
+- `--tune-out <file|->` saves the result elsewhere or prints it.
+- `--tuning <file>` loads a specific file.
+- `--no-tuning` ignores all tunings.
+
+To bake a tuning into the binary, use `zig build tune` followed by
+`zig build -Dtuning=primez.tuning`, or tune during the build with
+`zig build -Dautotune=true`. A baked-in tuning only applies when the
+run-time caches match the build profile.
+
+Tuning never changes correctness. The layout clamps every threshold to the
+primes its tier can handle, and the tuner rejects any candidate whose prime
+count differs from the reference.
+
 ### Comparing against primesieve
 
 `bench/` vendors [primesieve](https://github.com/kimwalisch/primesieve)
