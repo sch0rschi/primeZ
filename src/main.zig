@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const primeZ = @import("primeZ");
 const LayoutMod = primeZ.Layout;
 
@@ -45,6 +46,48 @@ fn loadTuning(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Layou
     };
 }
 
+fn userTuningPath(allocator: std.mem.Allocator, environ: *const std.process.Environ.Map, profile: LayoutMod.HardwareProfile) !?[]u8 {
+    const fileName = try std.fmt.allocPrint(allocator, "tuning-{d}-{d}-{d}.txt", .{ profile.l1dBytes / 1024, profile.l2Bytes / 1024, profile.l3Bytes / 1024 });
+    defer allocator.free(fileName);
+    if (environ.get("PRIMEZ_TUNING_DIR")) |dir| return try std.fs.path.join(allocator, &.{ dir, fileName });
+    if (environ.get("XDG_CONFIG_HOME")) |dir| return try std.fs.path.join(allocator, &.{ dir, "primez", fileName });
+    if (builtin.os.tag == .windows) {
+        if (environ.get("APPDATA")) |dir| return try std.fs.path.join(allocator, &.{ dir, "primez", fileName });
+    }
+    if (environ.get("HOME")) |dir| return try std.fs.path.join(allocator, &.{ dir, ".config", "primez", fileName });
+    return null;
+}
+
+fn loadUserTuning(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ?LayoutMod.Tuning {
+    const text = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1 << 16)) catch |err| {
+        if (err != error.FileNotFound) std.debug.print("warning: ignoring {s}: {t}\n", .{ path, err });
+        return null;
+    };
+    defer allocator.free(text);
+    return LayoutMod.Tuning.parse(text) catch |err| {
+        std.debug.print("warning: ignoring {s}: {t} - rerun primez --tune\n", .{ path, err });
+        return null;
+    };
+}
+
+fn runTuner(allocator: std.mem.Allocator, io: std.Io, selection: LayoutMod.Selection, options: primeZ.Tune.Options, outPath: ?[]const u8) !void {
+    const result = try primeZ.Tune.tune(allocator, io, selection, options);
+    var text: std.Io.Writer.Allocating = .init(allocator);
+    defer text.deinit();
+    try primeZ.Tune.writeTuningFile(&text.writer, result, selection.profile);
+    if (outPath != null and !std.mem.eql(u8, outPath.?, "-")) {
+        const path = outPath.?;
+        if (std.fs.path.dirname(path)) |dir| try std.Io.Dir.cwd().createDirPath(io, dir);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text.written() });
+        std.debug.print("wrote {s}\n", .{path});
+    } else {
+        var buffer: [4096]u8 = undefined;
+        var stdout = std.Io.File.stdout().writer(io, &buffer);
+        try stdout.interface.writeAll(text.written());
+        try stdout.interface.flush();
+    }
+}
+
 fn parseProfile(text: []const u8) !LayoutMod.HardwareProfile {
     var fields = std.mem.tokenizeScalar(u8, text, ',');
     const l1 = try std.fmt.parseInt(usize, fields.next() orelse return error.InvalidProfile, 10);
@@ -66,6 +109,9 @@ pub fn main(init: std.process.Init) !void {
     var emulated: ?LayoutMod.HardwareProfile = null;
     var tuningPath: ?[]const u8 = null;
     var noTuning = false;
+    var tune = false;
+    var tuneOut: ?[]const u8 = null;
+    var tuneOptions: primeZ.Tune.Options = .{};
     var positional: [2]usize = undefined;
     var positionalCount: usize = 0;
     while (argIter.next()) |arg| {
@@ -79,6 +125,17 @@ pub fn main(init: std.process.Init) !void {
             tuningPath = argIter.next() orelse return error.MissingTuningPath;
         } else if (std.mem.eql(u8, arg, "--no-tuning")) {
             noTuning = true;
+        } else if (std.mem.eql(u8, arg, "--tune")) {
+            tune = true;
+        } else if (std.mem.eql(u8, arg, "--tune-out")) {
+            tune = true;
+            tuneOut = argIter.next() orelse return error.MissingTuneOutPath;
+        } else if (std.mem.eql(u8, arg, "--tune-seconds")) {
+            tuneOptions.targetSeconds = try std.fmt.parseFloat(f64, argIter.next() orelse return error.MissingTuneSeconds);
+        } else if (std.mem.eql(u8, arg, "--tune-max-passes")) {
+            tuneOptions.maxPasses = @max(1, try std.fmt.parseInt(usize, argIter.next() orelse return error.MissingTuneMaxPasses, 10));
+        } else if (std.mem.eql(u8, arg, "--tune-repeats")) {
+            tuneOptions.repeats = @max(1, try std.fmt.parseInt(usize, argIter.next() orelse return error.MissingTuneRepeats, 10));
         } else {
             if (positionalCount == positional.len) return error.TooManyArguments;
             positional[positionalCount] = try std.fmt.parseInt(usize, arg, 10);
@@ -97,7 +154,7 @@ pub fn main(init: std.process.Init) !void {
         },
     }
 
-    var selection = LayoutMod.activeSelection();
+    var selection = if (tune) LayoutMod.untunedSelection() else LayoutMod.activeSelection();
     if (emulated) |hw| {
         selection = .{
             .profile = hw,
@@ -105,12 +162,27 @@ pub fn main(init: std.process.Init) !void {
             .detected = selection.detected,
         };
     }
+    const userPath = try userTuningPath(allocator, init.environ_map, selection.profile);
+    defer if (userPath) |path| allocator.free(path);
+
+    if (tune) {
+        if (forceFallback) selection.presieve = .fallback;
+        printProfile("Tuning for   ", selection.profile);
+        const outPath = tuneOut orelse userPath orelse {
+            std.debug.print("error: no HOME/XDG_CONFIG_HOME/PRIMEZ_TUNING_DIR to save the tuning in; pass --tune-out <file> or --tune-out - for stdout\n", .{});
+            return error.NoTuningDirectory;
+        };
+        return runTuner(allocator, io, selection, tuneOptions, outPath);
+    }
     if (noTuning) {
         selection = selection.withTuning(LayoutMod.Tuning.DEFAULT, .default);
     } else if (tuningPath) |path| {
         selection = selection.withTuning(try loadTuning(allocator, io, path), .file);
+    } else if (userPath) |path| {
+        if (loadUserTuning(allocator, io, path)) |tuning| selection = selection.withTuning(tuning, .user);
     }
     if (forceFallback) selection.presieve = .fallback;
+
     LayoutMod.overrideSelection(selection);
 
     const layouts = LayoutMod.layoutsForQuery(limit);
@@ -127,6 +199,7 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("\n", .{});
     }
     printTuning(selection);
+    if (userPath) |path| std.debug.print("User tuning file = {s}{s}\n", .{ path, if (selection.tuningSource == .user) "" else " (not used)" });
     printLayout("Query", layouts.query);
     printLayout("Self-sieve", layouts.selfSieve);
     std.debug.print("Threads = 1\n", .{});

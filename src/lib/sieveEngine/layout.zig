@@ -150,7 +150,7 @@ pub fn segmentElemsForQueryTuned(profile: HardwareProfile, limit: usize, tuning:
     return std.math.clamp(wanted, bounds.lower, bounds.upper);
 }
 
-pub const TuningSource = enum { default, file };
+pub const TuningSource = enum { default, user, file, autotuned };
 
 pub const Selection = struct {
     profile: HardwareProfile,
