@@ -439,20 +439,26 @@ const FakeBench = struct {
     noise: f64,
     gains: []const FakeGain,
     calls: usize = 0,
+    tuningCount: usize = 0,
 
-    const FakeGain = struct { mediumSegmentFactor: ?usize = null, smallL1StrideDivisor: ?usize = null, segmentMaxKiB: ?usize = null, l2StrideKiB: ?usize = null, smallL2StrideDivisor: ?usize = null, gain: f64 };
+    const FakeGain = struct { tuningOnly: bool = false, mediumSegmentFactor: ?usize = null, smallL1StrideDivisor: ?usize = null, segmentMaxKiB: ?usize = null, l2StrideKiB: ?usize = null, smallL2StrideDivisor: ?usize = null, gain: f64 };
 
     fn bench(self: *FakeBench, scenarioCount: usize) Tune.Bench {
-        return .{ .ptr = self, .scenarioCount = scenarioCount, .measureFn = measure };
+        return self.benchWithHeldOut(scenarioCount, 0);
+    }
+
+    fn benchWithHeldOut(self: *FakeBench, scenarioCount: usize, heldOutCount: usize) Tune.Bench {
+        self.tuningCount = scenarioCount;
+        return .{ .ptr = self, .scenarioCount = scenarioCount, .heldOutCount = heldOutCount, .measureFn = measure };
     }
 
     fn measure(ptr: *anyopaque, tuning: LayoutMod.Tuning, scenario: usize) anyerror!?f64 {
-        _ = scenario;
         const self: *FakeBench = @ptrCast(@alignCast(ptr));
         self.calls += 1;
         var cost: f64 = 1;
         for (self.gains) |g| {
-            const hit = (g.mediumSegmentFactor == null or g.mediumSegmentFactor.? == tuning.mediumSegmentFactor) and
+            const hit = (!g.tuningOnly or scenario < self.tuningCount) and
+                (g.mediumSegmentFactor == null or g.mediumSegmentFactor.? == tuning.mediumSegmentFactor) and
                 (g.smallL1StrideDivisor == null or g.smallL1StrideDivisor.? == tuning.smallL1StrideDivisor) and
                 (g.segmentMaxKiB == null or g.segmentMaxKiB.? == tuning.segmentMaxKiB) and
                 (g.l2StrideKiB == null or g.l2StrideKiB.? == tuning.l2StrideKiB) and
@@ -514,4 +520,20 @@ test "pair moves find gains that need two parameters to change together" {
     const result = try Tune.tuneWith(std.testing.allocator, fake.bench(4), FAKE_PROFILE, .{ .verbose = false });
     try std.testing.expectEqual(@as(usize, 256), result.tuning.l2StrideKiB);
     try std.testing.expectEqual(@as(usize, 8), result.tuning.smallL2StrideDivisor);
+}
+
+test "held-out validation rejects gains that only fit the tuning scenarios" {
+    const gains = [_]FakeBench.FakeGain{.{ .tuningOnly = true, .mediumSegmentFactor = 8, .gain = 0.10 }};
+    var fake = FakeBench{ .random = .init(5), .noise = 0.005, .gains = &gains };
+    const result = try Tune.tuneWith(std.testing.allocator, fake.benchWithHeldOut(4, 3), FAKE_PROFILE, .{ .verbose = false });
+    try std.testing.expect(result.tuning.eql(LayoutMod.Tuning.DEFAULT));
+    try std.testing.expectEqual(@as(usize, 3), result.validationRanges);
+}
+
+test "held-out validation keeps gains that generalize" {
+    const gains = [_]FakeBench.FakeGain{.{ .mediumSegmentFactor = 8, .gain = 0.10 }};
+    var fake = FakeBench{ .random = .init(6), .noise = 0.005, .gains = &gains };
+    const result = try Tune.tuneWith(std.testing.allocator, fake.benchWithHeldOut(4, 3), FAKE_PROFILE, .{ .verbose = false });
+    try std.testing.expectEqual(@as(usize, 8), result.tuning.mediumSegmentFactor);
+    try std.testing.expect(result.versusDefault.gainLow() > 0);
 }

@@ -27,6 +27,7 @@ pub const Result = struct {
     tuning: Tuning,
     noise: f64,
     versusDefault: Stats,
+    validationRanges: usize,
 };
 
 pub const Stats = struct {
@@ -68,6 +69,7 @@ const MAX_ROUNDS = 64;
 pub const Bench = struct {
     ptr: *anyopaque,
     scenarioCount: usize,
+    heldOutCount: usize = 0,
     measureFn: *const fn (ptr: *anyopaque, tuning: Tuning, scenario: usize) anyerror!?f64,
 
     pub fn measure(self: Bench, tuning: Tuning, scenario: usize) !?f64 {
@@ -85,17 +87,29 @@ const Scenario = struct {
     baseSeconds: f64 = 0,
 };
 
-const SCENARIO_LIMITS = [_]struct { name: []const u8, limit: u64 }{
+const ScenarioSpec = struct { name: []const u8, limit: u64, targetScale: f64 = 1 };
+
+const SCENARIO_LIMITS = [_]ScenarioSpec{
     .{ .name = "small", .limit = 0 },
     .{ .name = "mid", .limit = 10_000_000_000_000 },
     .{ .name = "high", .limit = 1_000_000_000_000_000 },
     .{ .name = "extreme", .limit = 100_000_000_000_000_000 },
 };
 
+const HELD_OUT_LIMITS = [_]ScenarioSpec{
+    .{ .name = "small/2", .limit = 0, .targetScale = 0.5 },
+    .{ .name = "1e11", .limit = 100_000_000_000 },
+    .{ .name = "1e14", .limit = 100_000_000_000_000 },
+    .{ .name = "1e16", .limit = 10_000_000_000_000_000 },
+    .{ .name = "1e18", .limit = 1_000_000_000_000_000_000 },
+};
+
+const ALL_SPECS = SCENARIO_LIMITS ++ HELD_OUT_LIMITS;
+
 const MAX_CANDIDATES = 32;
 const MAX_HISTORY = 64;
 const NEIGHBOR_REACH = 2;
-const MAX_SCENARIOS = 8;
+const MAX_SCENARIOS = 16;
 const MIN_WIDTH: u64 = 1_000_000;
 const SETUP_SHARE_INVERSE = 4;
 
@@ -140,7 +154,7 @@ const SieveBench = struct {
     targetSeconds: f64,
     repeats: usize,
     verbose: bool,
-    scenarios: [SCENARIO_LIMITS.len]Scenario = undefined,
+    scenarios: [ALL_SPECS.len]Scenario = undefined,
 
     const Run = struct { seconds: f64, primes: usize };
 
@@ -158,7 +172,7 @@ const SieveBench = struct {
     }
 
     fn bench(self: *SieveBench) Bench {
-        return .{ .ptr = self, .scenarioCount = self.scenarios.len, .measureFn = measureErased };
+        return .{ .ptr = self, .scenarioCount = SCENARIO_LIMITS.len, .heldOutCount = HELD_OUT_LIMITS.len, .measureFn = measureErased };
     }
 
     fn log(self: *const SieveBench, comptime fmt: []const u8, args: anytype) void {
@@ -187,10 +201,11 @@ const SieveBench = struct {
 
     fn calibrate(self: *SieveBench) !void {
         self.log("timing with {s}, calibrating scenarios for ~{d:.2}s each\n", .{ if (self.clock == .cpu_thread) "thread CPU time" else "wall time", self.targetSeconds });
-        for (SCENARIO_LIMITS, &self.scenarios) |spec, *scenario| {
+        for (ALL_SPECS, &self.scenarios, 0..) |spec, *scenario, i| {
+            if (i == SCENARIO_LIMITS.len) self.log("  held out for validation:\n", .{});
             _ = try self.scenarioRun(spec.limit, MIN_WIDTH);
             const setup = if (spec.limit == 0) 0 else (try self.scenarioRunBest(spec.limit, MIN_WIDTH)).seconds;
-            const target = @max(self.targetSeconds, SETUP_SHARE_INVERSE * setup);
+            const target = @max(self.targetSeconds * spec.targetScale, SETUP_SHARE_INVERSE * setup);
             var width: u64 = 100_000_000;
             var run = try self.scenarioRun(spec.limit, width);
             var iterations: usize = 0;
@@ -294,7 +309,18 @@ const Tuner = struct {
 
     const Race = struct { winner: usize, stats: Stats };
 
-    fn race(self: *Tuner, candidates: []const Tuning) !Race {
+    const Scenarios = struct { first: usize, count: usize };
+
+    fn tuningScenarios(self: *const Tuner) Scenarios {
+        return .{ .first = 0, .count = self.bench.scenarioCount };
+    }
+
+    fn validationScenarios(self: *const Tuner) Scenarios {
+        if (self.bench.heldOutCount == 0) return self.tuningScenarios();
+        return .{ .first = self.bench.scenarioCount, .count = self.bench.heldOutCount };
+    }
+
+    fn race(self: *Tuner, candidates: []const Tuning, scenarios: Scenarios) !Race {
         const count = candidates.len;
         std.debug.assert(count >= 2 and count <= MAX_CANDIDATES + 1);
         const maxRounds = @min(@max(self.options.maxRounds, self.options.minRounds), MAX_ROUNDS);
@@ -307,7 +333,7 @@ const Tuner = struct {
         var rounds: usize = 0;
         while (rounds < maxRounds) {
             var roundCost: [MAX_CANDIDATES + 1]f64 = @splat(0);
-            for (0..self.bench.scenarioCount) |s| {
+            for (scenarios.first..scenarios.first + scenarios.count) |s| {
                 self.shuffledOrder(order[0..count]);
                 for (order[0..count]) |c| {
                     if (!alive[c]) continue;
@@ -461,7 +487,7 @@ const Tuner = struct {
         }
         if (count == 1) return unchanged;
 
-        const result = try self.race(candidates[0..count]);
+        const result = try self.race(candidates[0..count], self.tuningScenarios());
         if (result.winner == 0) {
             self.log("  {f} keep ({d} candidates, {d} rounds)\n", .{ moveValue(move, incumbent), count - 1, result.stats.rounds });
             return unchanged;
@@ -529,7 +555,7 @@ pub fn tune(allocator: std.mem.Allocator, io: std.Io, selection: Selection, opti
 }
 
 pub fn tuneWith(allocator: std.mem.Allocator, bench: Bench, profile: HardwareProfile, options: Options) !Result {
-    std.debug.assert(bench.scenarioCount <= MAX_SCENARIOS);
+    std.debug.assert(bench.scenarioCount + bench.heldOutCount <= MAX_SCENARIOS);
     var tuner = Tuner{
         .allocator = allocator,
         .bench = bench,
@@ -593,16 +619,17 @@ pub fn tuneWith(allocator: std.mem.Allocator, bench: Bench, profile: HardwarePro
         }
     } else tuner.log("stopped after {d} passes without stagnating\n", .{options.maxPasses});
 
-    tuner.log("verifying\n", .{});
+    const validation = tuner.validationScenarios();
+    tuner.log("validating on {d} {s} ranges\n", .{ validation.count, if (bench.heldOutCount > 0) "held-out" else "tuning" });
     var chosen = options.start;
     if (!current.eql(options.start)) {
-        const result = try tuner.race(&.{ options.start, current });
+        const result = try tuner.race(&.{ options.start, current }, validation);
         if (result.winner == 1) chosen = current;
         tuner.log("  tuned vs start: {s}\n", .{if (result.winner == 1) "tuned is faster" else "no confirmed gain, keeping the start"});
     }
     var versusDefault: Stats = .{};
     if (!chosen.eql(Tuning.DEFAULT)) {
-        const result = try tuner.race(&.{ Tuning.DEFAULT, chosen });
+        const result = try tuner.race(&.{ Tuning.DEFAULT, chosen }, validation);
         if (result.winner == 1) {
             versusDefault = result.stats;
             tuner.log("  vs default: {d:.1}% faster (99% CI {d:.1}..{d:.1}%)\n", .{ versusDefault.gain() * 100, versusDefault.gainLow() * 100, versusDefault.gainHigh() * 100 });
@@ -611,14 +638,14 @@ pub fn tuneWith(allocator: std.mem.Allocator, bench: Bench, profile: HardwarePro
             tuner.log("  no confirmed gain over the defaults, keeping the defaults\n", .{});
         }
     }
-    return .{ .tuning = chosen, .noise = noise, .versusDefault = versusDefault };
+    return .{ .tuning = chosen, .noise = noise, .versusDefault = versusDefault, .validationRanges = validation.count };
 }
 
 pub fn writeTuningFile(writer: *std.Io.Writer, result: Result, profile: HardwareProfile) std.Io.Writer.Error!void {
     try writer.print("# primeZ tuning for L1d {d} KiB, L2 {d} KiB, L3 {d} KiB\n", .{ profile.l1dBytes / 1024, profile.l2Bytes / 1024, profile.l3Bytes / 1024 });
     const v = result.versusDefault;
     if (v.rounds > 0) {
-        try writer.print("# {d:.1}% faster than the defaults (99% CI {d:.1}..{d:.1}%, {d} rounds)\n", .{ v.gain() * 100, v.gainLow() * 100, v.gainHigh() * 100, v.rounds });
+        try writer.print("# {d:.1}% faster than the defaults on {d} held-out ranges (99% CI {d:.1}..{d:.1}%, {d} rounds)\n", .{ v.gain() * 100, result.validationRanges, v.gainLow() * 100, v.gainHigh() * 100, v.rounds });
     } else {
         try writer.writeAll("# no confirmed gain over the defaults\n");
     }

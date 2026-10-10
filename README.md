@@ -97,6 +97,12 @@ caches automatically.
   and each stride with its divisor. A pair move races the grid of
   neighboring values of both parameters, so it finds gains that need
   both to change at once.
+- The search never sees five held-out ranges: from zero at half length,
+  and windows below 1e11, 1e14, 1e16 and 1e18. The final races run only
+  on those. The new tuning must beat the starting tuning there, and the
+  result must beat the defaults there, or the tuner falls back. The file
+  records the gain over the defaults with its 99% confidence interval and
+  the measured noise.
 - The tuner times with per-thread CPU time where available, so time spent
   descheduled by other processes does not count. It measures the noise
   first and refuses to tune above 10% (`--tune-anyway` overrides).
