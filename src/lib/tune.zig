@@ -11,6 +11,8 @@ const HardwareProfile = LayoutMod.HardwareProfile;
 pub const Options = struct {
     targetSeconds: f64 = 0.2,
     repeats: usize = 3,
+    minRounds: usize = 4,
+    maxRounds: usize = 12,
     maxPasses: usize = 6,
     minGain: f64 = 0.01,
     minPassGain: f64 = 0.01,
@@ -23,10 +25,45 @@ pub const Options = struct {
 
 pub const Result = struct {
     tuning: Tuning,
-    defaultCost: f64,
-    tunedCost: f64,
     noise: f64,
+    versusDefault: Stats,
 };
+
+pub const Stats = struct {
+    rounds: usize = 0,
+    meanLog: f64 = 0,
+    lowLog: f64 = 0,
+    highLog: f64 = 0,
+
+    pub fn of(logs: []const f64) Stats {
+        const n = logs.len;
+        if (n < 2) return .{ .rounds = n, .meanLog = if (n == 1) logs[0] else 0, .lowLog = -std.math.inf(f64), .highLog = std.math.inf(f64) };
+        var sum: f64 = 0;
+        for (logs) |l| sum += l;
+        const mean = sum / @as(f64, @floatFromInt(n));
+        var squares: f64 = 0;
+        for (logs) |l| squares += (l - mean) * (l - mean);
+        const standardError = @sqrt(squares / @as(f64, @floatFromInt(n - 1)) / @as(f64, @floatFromInt(n)));
+        const t = if (n - 1 <= T_995.len) T_995[n - 2] else Z_995;
+        return .{ .rounds = n, .meanLog = mean, .lowLog = mean - t * standardError, .highLog = mean + t * standardError };
+    }
+
+    pub fn gain(self: Stats) f64 {
+        return 1 - @exp(self.meanLog);
+    }
+
+    pub fn gainLow(self: Stats) f64 {
+        return 1 - @exp(self.highLog);
+    }
+
+    pub fn gainHigh(self: Stats) f64 {
+        return 1 - @exp(self.lowLog);
+    }
+};
+
+const T_995 = [_]f64{ 63.657, 9.925, 5.841, 4.604, 4.032, 3.707, 3.499, 3.355, 3.250, 3.169, 3.106, 3.055, 3.012, 2.977, 2.947, 2.921, 2.898, 2.878, 2.861, 2.845, 2.831, 2.819, 2.807, 2.797, 2.787, 2.779, 2.771, 2.763, 2.756, 2.750 };
+const Z_995 = 2.576;
+const MAX_ROUNDS = 64;
 
 pub const Bench = struct {
     ptr: *anyopaque,
@@ -196,7 +233,6 @@ const Tuner = struct {
     profile: HardwareProfile,
     options: Options,
     random: std.Random.DefaultPrng,
-    minGain: f64,
 
     fn log(self: *const Tuner, comptime fmt: []const u8, args: anytype) void {
         if (self.options.verbose) std.debug.print(fmt, args);
@@ -218,35 +254,69 @@ const Tuner = struct {
         return noise;
     }
 
-    fn evaluate(self: *Tuner, candidates: []const Tuning, costs: []f64, repeats: usize) !void {
-        var best: [MAX_CANDIDATES + 1][MAX_SCENARIOS]f64 = undefined;
-        for (best[0..candidates.len]) |*row| row.* = @splat(std.math.inf(f64));
-        var broken: [MAX_CANDIDATES + 1]bool = @splat(false);
+    const Race = struct { winner: usize, stats: Stats };
+
+    fn race(self: *Tuner, candidates: []const Tuning) !Race {
+        const count = candidates.len;
+        std.debug.assert(count >= 2 and count <= MAX_CANDIDATES + 1);
+        const maxRounds = @min(@max(self.options.maxRounds, self.options.minRounds), MAX_ROUNDS);
+        const threshold = @log(1 - self.options.minGain);
+        var logs: [MAX_CANDIDATES + 1][MAX_ROUNDS]f64 = undefined;
+        var alive: [MAX_CANDIDATES + 1]bool = @splat(true);
+        var stats: [MAX_CANDIDATES + 1]Stats = @splat(.{});
         var order: [MAX_CANDIDATES + 1]usize = undefined;
 
-        for (0..repeats) |_| {
+        var rounds: usize = 0;
+        while (rounds < maxRounds) {
+            var roundCost: [MAX_CANDIDATES + 1]f64 = @splat(0);
             for (0..self.bench.scenarioCount) |s| {
-                self.shuffledOrder(order[0..candidates.len]);
-                for (order[0..candidates.len]) |c| {
-                    if (broken[c]) continue;
+                self.shuffledOrder(order[0..count]);
+                for (order[0..count]) |c| {
+                    if (!alive[c]) continue;
                     const cost = (try self.bench.measure(candidates[c], s)) orelse {
-                        broken[c] = true;
+                        if (c == 0) return error.InconsistentPrimeCount;
+                        alive[c] = false;
                         continue;
                     };
-                    best[c][s] = @min(best[c][s], cost);
+                    roundCost[c] += cost;
                 }
             }
+            for (1..count) |c| {
+                if (alive[c]) logs[c][rounds] = @log(roundCost[c] / roundCost[0]);
+            }
+            rounds += 1;
+            if (rounds < self.options.minRounds) continue;
+
+            var rivals: usize = 0;
+            for (1..count) |c| {
+                if (!alive[c]) continue;
+                stats[c] = Stats.of(logs[c][0..rounds]);
+                if (stats[c].lowLog > threshold) alive[c] = false else rivals += 1;
+            }
+            if (rivals == 0) break;
+            if (self.dominantWinner(stats[0..count], alive[0..count], threshold)) |w| return .{ .winner = w, .stats = stats[w] };
         }
 
-        for (costs[0..candidates.len], 0..) |*cost, c| {
-            if (broken[c]) {
-                cost.* = std.math.inf(f64);
-                continue;
-            }
-            var sum: f64 = 0;
-            for (best[c][0..self.bench.scenarioCount]) |b| sum += b;
-            cost.* = sum / @as(f64, @floatFromInt(self.bench.scenarioCount));
+        var best: usize = 0;
+        for (1..count) |c| {
+            if (alive[c] and isWinner(stats[c], threshold) and (best == 0 or stats[c].meanLog < stats[best].meanLog)) best = c;
         }
+        return .{ .winner = best, .stats = if (best == 0) .{ .rounds = rounds } else stats[best] };
+    }
+
+    fn isWinner(stats: Stats, threshold: f64) bool {
+        return stats.highLog < 0 and stats.meanLog < threshold;
+    }
+
+    fn dominantWinner(self: *const Tuner, stats: []const Stats, alive: []const bool, threshold: f64) ?usize {
+        _ = self;
+        for (1..stats.len) |w| {
+            if (!alive[w] or !isWinner(stats[w], threshold)) continue;
+            for (1..stats.len) |c| {
+                if (c != w and alive[c] and stats[c].lowLog <= stats[w].highLog) break;
+            } else return w;
+        }
+        return null;
     }
 
     fn candidatesFor(self: *const Tuner, axis: Axis, current: Tuning) Candidates {
@@ -313,27 +383,14 @@ const Tuner = struct {
         }
         if (count == 1) return unchanged;
 
-        var costs: [MAX_CANDIDATES + 1]f64 = undefined;
-        try self.evaluate(candidates[0..count], costs[0..count], self.options.repeats);
-
-        var bestIndex: usize = 0;
-        for (costs[1..count], 1..) |cost, i| {
-            if (cost < costs[bestIndex]) bestIndex = i;
-        }
-        if (bestIndex == 0 or costs[bestIndex] >= costs[0] * (1 - self.minGain)) {
-            self.log("  {t:<22} keep {f} ({d:.3})\n", .{ axis, valueOf(axis, incumbent), costs[0] });
+        const result = try self.race(candidates[0..count]);
+        if (result.winner == 0) {
+            self.log("  {t:<22} keep {f} ({d} rounds)\n", .{ axis, valueOf(axis, incumbent), result.stats.rounds });
             return unchanged;
         }
-
-        const duel = [_]Tuning{ incumbent, candidates[bestIndex] };
-        var confirmed: [2]f64 = undefined;
-        try self.evaluate(&duel, &confirmed, self.options.repeats + 2);
-        if (confirmed[1] >= confirmed[0] * (1 - self.minGain)) {
-            self.log("  {t:<22} keep {f} ({f} looked {d:.1}% faster, confirmed only {d:.1}%)\n", .{ axis, valueOf(axis, incumbent), valueOf(axis, candidates[bestIndex]), (1 - costs[bestIndex] / costs[0]) * 100, (1 - confirmed[1] / confirmed[0]) * 100 });
-            return unchanged;
-        }
-        self.log("  {t:<22} -> {f} ({d:.1}% faster, confirmed)\n", .{ axis, valueOf(axis, candidates[bestIndex]), (1 - confirmed[1] / confirmed[0]) * 100 });
-        return .{ .tuning = candidates[bestIndex], .ratio = confirmed[1] / confirmed[0] };
+        const stats = result.stats;
+        self.log("  {t:<22} -> {f} ({d:.1}% faster, 99% CI {d:.1}..{d:.1}%, {d} rounds)\n", .{ axis, valueOf(axis, candidates[result.winner]), stats.gain() * 100, stats.gainLow() * 100, stats.gainHigh() * 100, stats.rounds });
+        return .{ .tuning = candidates[result.winner], .ratio = @exp(stats.meanLog) };
     }
 };
 
@@ -385,7 +442,6 @@ pub fn tuneWith(allocator: std.mem.Allocator, bench: Bench, profile: HardwarePro
         .profile = profile,
         .options = options,
         .random = .init(options.seed),
-        .minGain = options.minGain,
     };
 
     const noise = try tuner.estimateNoise();
@@ -395,9 +451,8 @@ pub fn tuneWith(allocator: std.mem.Allocator, bench: Bench, profile: HardwarePro
             tuner.log("error: the machine is too noisy to tune ({d:.1}% > {d:.1}%); stop other work or pass --tune-anyway\n", .{ noise * 100, options.maxNoise * 100 });
             return error.TooNoisy;
         }
-        tuner.log("warning: tuning anyway, only gains above the noise are accepted\n", .{});
+        tuner.log("warning: tuning anyway, expect longer races and fewer accepted changes\n", .{});
     }
-    tuner.minGain = @max(options.minGain, noise);
 
     const axes = comptime std.enums.values(Axis);
     var current = options.start;
@@ -444,30 +499,35 @@ pub fn tuneWith(allocator: std.mem.Allocator, bench: Bench, profile: HardwarePro
         }
     } else tuner.log("stopped after {d} passes without stagnating\n", .{options.maxPasses});
 
-    const finalists = [_]Tuning{ Tuning.DEFAULT, options.start, current };
-    const labels = [_][]const u8{ "default", "start", "tuned" };
-    var finalCosts: [finalists.len]f64 = undefined;
     tuner.log("verifying\n", .{});
-    try tuner.evaluate(&finalists, &finalCosts, options.repeats + 2);
-
-    var best: usize = 0;
-    for (finalists[1..], finalCosts[1..], 1..) |candidate, cost, i| {
-        if (!candidate.eql(finalists[best]) and cost < finalCosts[best] * (1 - tuner.minGain)) best = i;
+    var chosen = options.start;
+    if (!current.eql(options.start)) {
+        const result = try tuner.race(&.{ options.start, current });
+        if (result.winner == 1) chosen = current;
+        tuner.log("  tuned vs start: {s}\n", .{if (result.winner == 1) "tuned is faster" else "no confirmed gain, keeping the start"});
     }
-    for (labels, finalCosts, 0..) |label, cost, i| {
-        if (i == 0 or !finalists[i].eql(finalists[i - 1])) tuner.log("  {s:<8} {d:.3}{s}\n", .{ label, cost, if (i == best) " <- kept" else "" });
+    var versusDefault: Stats = .{};
+    if (!chosen.eql(Tuning.DEFAULT)) {
+        const result = try tuner.race(&.{ Tuning.DEFAULT, chosen });
+        if (result.winner == 1) {
+            versusDefault = result.stats;
+            tuner.log("  vs default: {d:.1}% faster (99% CI {d:.1}..{d:.1}%)\n", .{ versusDefault.gain() * 100, versusDefault.gainLow() * 100, versusDefault.gainHigh() * 100 });
+        } else {
+            chosen = Tuning.DEFAULT;
+            tuner.log("  no confirmed gain over the defaults, keeping the defaults\n", .{});
+        }
     }
-    return .{
-        .tuning = finalists[best],
-        .defaultCost = finalCosts[0],
-        .tunedCost = finalCosts[best],
-        .noise = noise,
-    };
+    return .{ .tuning = chosen, .noise = noise, .versusDefault = versusDefault };
 }
 
 pub fn writeTuningFile(writer: *std.Io.Writer, result: Result, profile: HardwareProfile) std.Io.Writer.Error!void {
     try writer.print("# primeZ tuning for L1d {d} KiB, L2 {d} KiB, L3 {d} KiB\n", .{ profile.l1dBytes / 1024, profile.l2Bytes / 1024, profile.l3Bytes / 1024 });
-    try writer.print("# relative cost: default {d:.3}, tuned {d:.3} ({d:.1}% faster)\n", .{ result.defaultCost, result.tunedCost, (result.defaultCost / result.tunedCost - 1) * 100 });
+    const v = result.versusDefault;
+    if (v.rounds > 0) {
+        try writer.print("# {d:.1}% faster than the defaults (99% CI {d:.1}..{d:.1}%, {d} rounds)\n", .{ v.gain() * 100, v.gainLow() * 100, v.gainHigh() * 100, v.rounds });
+    } else {
+        try writer.writeAll("# no confirmed gain over the defaults\n");
+    }
     try writer.print("# measurement noise {d:.1}%\n", .{result.noise * 100});
     try writer.writeAll("# 0 = derive from the cache sizes\n");
     try result.tuning.write(writer);

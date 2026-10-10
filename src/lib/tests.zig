@@ -438,6 +438,7 @@ const FakeBench = struct {
     random: std.Random.DefaultPrng,
     noise: f64,
     gains: []const FakeGain,
+    calls: usize = 0,
 
     const FakeGain = struct { mediumSegmentFactor: ?usize = null, smallL1StrideDivisor: ?usize = null, segmentMaxKiB: ?usize = null, l2StrideKiB: ?usize = null, smallL2StrideDivisor: ?usize = null, gain: f64 };
 
@@ -448,6 +449,7 @@ const FakeBench = struct {
     fn measure(ptr: *anyopaque, tuning: LayoutMod.Tuning, scenario: usize) anyerror!?f64 {
         _ = scenario;
         const self: *FakeBench = @ptrCast(@alignCast(ptr));
+        self.calls += 1;
         var cost: f64 = 1;
         for (self.gains) |g| {
             const hit = (g.mediumSegmentFactor == null or g.mediumSegmentFactor.? == tuning.mediumSegmentFactor) and
@@ -479,4 +481,25 @@ test "the tuner finds planted gains and ignores parameters that do not matter" {
 test "the tuner refuses a machine that is too noisy" {
     var fake = FakeBench{ .random = .init(2), .noise = 0.5, .gains = &.{} };
     try std.testing.expectError(error.TooNoisy, Tune.tuneWith(std.testing.allocator, fake.bench(4), FAKE_PROFILE, .{ .verbose = false }));
+}
+
+test "the tuner does not mistake noise for a gain" {
+    for (1..6) |seed| {
+        var fake = FakeBench{ .random = .init(seed), .noise = 0.03, .gains = &.{} };
+        const result = try Tune.tuneWith(std.testing.allocator, fake.bench(4), FAKE_PROFILE, .{ .verbose = false, .seed = seed });
+        try std.testing.expect(result.tuning.eql(LayoutMod.Tuning.DEFAULT));
+    }
+}
+
+test "races drop equal candidates after the minimum rounds" {
+    var fake = FakeBench{ .random = .init(3), .noise = 0.001, .gains = &.{} };
+    _ = try Tune.tuneWith(std.testing.allocator, fake.bench(4), FAKE_PROFILE, .{ .verbose = false });
+    try std.testing.expect(fake.calls < 1600);
+}
+
+test "confidence intervals narrow with consistent ratios" {
+    const tight = Tune.Stats.of(&.{ -0.05, -0.05, -0.05, -0.05 });
+    try std.testing.expectApproxEqAbs(@as(f64, -0.05), tight.highLog, 1e-12);
+    const loose = Tune.Stats.of(&.{ -0.10, 0.02, -0.08, 0.01 });
+    try std.testing.expect(loose.lowLog < -0.1 and loose.highLog > 0);
 }

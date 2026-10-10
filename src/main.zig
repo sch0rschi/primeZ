@@ -139,8 +139,8 @@ pub fn main(init: std.process.Init) !void {
             tuneOptions.allowNoisy = true;
         } else if (std.mem.eql(u8, arg, "--tune-max-passes")) {
             tuneOptions.maxPasses = @max(1, try std.fmt.parseInt(usize, argIter.next() orelse return error.MissingTuneMaxPasses, 10));
-        } else if (std.mem.eql(u8, arg, "--tune-repeats")) {
-            tuneOptions.repeats = @max(1, try std.fmt.parseInt(usize, argIter.next() orelse return error.MissingTuneRepeats, 10));
+        } else if (std.mem.eql(u8, arg, "--tune-max-rounds")) {
+            tuneOptions.maxRounds = @max(1, try std.fmt.parseInt(usize, argIter.next() orelse return error.MissingTuneMaxRounds, 10));
         } else {
             if (positionalCount == positional.len) return error.TooManyArguments;
             positional[positionalCount] = try std.fmt.parseInt(usize, arg, 10);

@@ -86,7 +86,13 @@ The result goes to `~/.config/primez/tuning-<L1>-<L2>-<L3>.txt`, or under
 file name carries the cache sizes, so machines that share a home directory
 keep separate results. Every later run loads the file for its detected
 caches automatically.
-- `--tune-seconds <s>` and `--tune-repeats <n>` trade tuning time for noise.
+- `--tune-seconds <s>` sets the length of one measurement and
+  `--tune-max-rounds <n>` caps the rounds per race (default 12).
+- Each parameter is decided by a race. All candidate values run in rounds
+  against the current value, and each candidate is judged by its per-round
+  cost ratio to that value. After 4 rounds, a candidate that is confidently
+  not 1% faster is dropped. A winner needs a 99% confidence interval below
+  zero and a mean gain of at least 1%.
 - The tuner times with per-thread CPU time where available, so time spent
   descheduled by other processes does not count. It measures the noise
   first and refuses to tune above 10% (`--tune-anyway` overrides).
