@@ -494,7 +494,7 @@ test "the tuner does not mistake noise for a gain" {
 test "races drop equal candidates after the minimum rounds" {
     var fake = FakeBench{ .random = .init(3), .noise = 0.001, .gains = &.{} };
     _ = try Tune.tuneWith(std.testing.allocator, fake.bench(4), FAKE_PROFILE, .{ .verbose = false });
-    try std.testing.expect(fake.calls < 1600);
+    try std.testing.expect(fake.calls < 3200);
 }
 
 test "confidence intervals narrow with consistent ratios" {
@@ -502,4 +502,16 @@ test "confidence intervals narrow with consistent ratios" {
     try std.testing.expectApproxEqAbs(@as(f64, -0.05), tight.highLog, 1e-12);
     const loose = Tune.Stats.of(&.{ -0.10, 0.02, -0.08, 0.01 });
     try std.testing.expect(loose.lowLog < -0.1 and loose.highLog > 0);
+}
+
+test "pair moves find gains that need two parameters to change together" {
+    const gains = [_]FakeBench.FakeGain{
+        .{ .l2StrideKiB = 256, .gain = -0.05 },
+        .{ .smallL2StrideDivisor = 8, .gain = -0.05 },
+        .{ .l2StrideKiB = 256, .smallL2StrideDivisor = 8, .gain = 0.25 },
+    };
+    var fake = FakeBench{ .random = .init(4), .noise = 0.005, .gains = &gains };
+    const result = try Tune.tuneWith(std.testing.allocator, fake.bench(4), FAKE_PROFILE, .{ .verbose = false });
+    try std.testing.expectEqual(@as(usize, 256), result.tuning.l2StrideKiB);
+    try std.testing.expectEqual(@as(usize, 8), result.tuning.smallL2StrideDivisor);
 }

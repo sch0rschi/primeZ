@@ -92,7 +92,9 @@ const SCENARIO_LIMITS = [_]struct { name: []const u8, limit: u64 }{
     .{ .name = "extreme", .limit = 100_000_000_000_000_000 },
 };
 
-const MAX_CANDIDATES = 16;
+const MAX_CANDIDATES = 32;
+const MAX_HISTORY = 64;
+const NEIGHBOR_REACH = 2;
 const MAX_SCENARIOS = 8;
 const MIN_WIDTH: u64 = 1_000_000;
 const SETUP_SHARE_INVERSE = 4;
@@ -226,6 +228,42 @@ const SieveBench = struct {
         return best;
     }
 };
+
+const Move = []const Axis;
+
+const MOVES: []const Move = blk: {
+    var moves: []const Move = &.{};
+    for (std.enums.values(Axis)) |axis| moves = moves ++ &[_]Move{&[_]Axis{axis}};
+    break :blk moves ++ &[_]Move{
+        &.{ .segmentMinKiB, .segmentMaxKiB },
+        &.{ .l1StrideKiB, .smallL1StrideDivisor },
+        &.{ .l2StrideKiB, .smallL2StrideDivisor },
+    };
+};
+
+const MoveKey = [2]usize;
+
+const History = struct {
+    keys: [MAX_HISTORY]MoveKey = undefined,
+    len: usize = 0,
+
+    fn contains(self: *const History, key: MoveKey) bool {
+        for (self.keys[0..self.len]) |k| if (std.mem.eql(usize, &k, &key)) return true;
+        return false;
+    }
+
+    fn add(self: *History, key: MoveKey) void {
+        if (self.contains(key) or self.len == MAX_HISTORY) return;
+        self.keys[self.len] = key;
+        self.len += 1;
+    }
+};
+
+fn moveKey(move: Move, tuning: Tuning) MoveKey {
+    var key: MoveKey = @splat(0);
+    for (move, 0..) |axis, i| key[i] = axisValue(axis, tuning);
+    return key;
+}
 
 const Tuner = struct {
     allocator: std.mem.Allocator,
@@ -365,34 +403,90 @@ const Tuner = struct {
         return t;
     }
 
+    fn effectiveValue(self: *const Tuner, axis: Axis, tuning: Tuning) usize {
+        return switch (axis) {
+            .segmentMinKiB => LayoutMod.segmentBoundsFor(self.profile, tuning).lower,
+            .segmentMaxKiB => LayoutMod.segmentBoundsFor(self.profile, tuning).upper,
+            .l1StrideKiB => LayoutMod.l1StrideElemsFor(self.profile, tuning),
+            .l2StrideKiB => LayoutMod.l2StrideElemsFor(self.profile, tuning),
+            else => axisValue(axis, tuning),
+        };
+    }
+
+    fn neighborsFor(self: *const Tuner, axis: Axis, incumbent: Tuning) Candidates {
+        const own = self.effectiveValue(axis, incumbent);
+        var all: Candidates = .{};
+        all.add(axisValue(axis, incumbent));
+        for (self.candidatesFor(axis, incumbent).slice()) |v| {
+            if (self.effectiveValue(axis, withValue(axis, incumbent, v)) != own) all.add(v);
+        }
+        const Context = struct {
+            tuner: *const Tuner,
+            axis: Axis,
+            base: Tuning,
+            fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+                return ctx.tuner.effectiveValue(ctx.axis, withValue(ctx.axis, ctx.base, a)) < ctx.tuner.effectiveValue(ctx.axis, withValue(ctx.axis, ctx.base, b));
+            }
+        };
+        const values = all.values[0..all.len];
+        std.mem.sortUnstable(usize, values, Context{ .tuner = self, .axis = axis, .base = incumbent }, Context.lessThan);
+        const at = std.mem.indexOfScalar(usize, values, axisValue(axis, incumbent)).?;
+        var near: Candidates = .{};
+        for (values[at -| NEIGHBOR_REACH..@min(at + NEIGHBOR_REACH + 1, values.len)]) |v| near.add(v);
+        return near;
+    }
+
     const Step = struct { tuning: Tuning, ratio: f64 };
 
-    fn tuneAxis(self: *Tuner, axis: Axis, incumbent: Tuning) !Step {
-        const unchanged: Step = .{ .tuning = incumbent, .ratio = 1 };
-        const values = self.candidatesFor(axis, incumbent);
-        if (values.len == 0) return unchanged;
+    fn addCandidate(candidates: []Tuning, count: *usize, t: Tuning) void {
+        if (t.validate() == error.OutOfRange or count.* == candidates.len) return;
+        for (candidates[0..count.*]) |c| if (c.eql(t)) return;
+        candidates[count.*] = t;
+        count.* += 1;
+    }
 
+    fn tuneMove(self: *Tuner, move: Move, incumbent: Tuning) !Step {
+        const unchanged: Step = .{ .tuning = incumbent, .ratio = 1 };
         var candidates: [MAX_CANDIDATES + 1]Tuning = undefined;
         candidates[0] = incumbent;
         var count: usize = 1;
-        for (values.slice()) |v| {
-            const t = withValue(axis, incumbent, v);
-            if (t.eql(incumbent) or t.validate() == error.OutOfRange) continue;
-            candidates[count] = t;
-            count += 1;
+        if (move.len == 1) {
+            for (self.candidatesFor(move[0], incumbent).slice()) |v| addCandidate(&candidates, &count, withValue(move[0], incumbent, v));
+        } else {
+            const first = self.neighborsFor(move[0], incumbent);
+            const second = self.neighborsFor(move[1], incumbent);
+            for (first.slice()) |a| for (second.slice()) |b| {
+                addCandidate(&candidates, &count, withValue(move[1], withValue(move[0], incumbent, a), b));
+            };
         }
         if (count == 1) return unchanged;
 
         const result = try self.race(candidates[0..count]);
         if (result.winner == 0) {
-            self.log("  {t:<22} keep {f} ({d} rounds)\n", .{ axis, valueOf(axis, incumbent), result.stats.rounds });
+            self.log("  {f} keep ({d} candidates, {d} rounds)\n", .{ moveValue(move, incumbent), count - 1, result.stats.rounds });
             return unchanged;
         }
         const stats = result.stats;
-        self.log("  {t:<22} -> {f} ({d:.1}% faster, 99% CI {d:.1}..{d:.1}%, {d} rounds)\n", .{ axis, valueOf(axis, candidates[result.winner]), stats.gain() * 100, stats.gainLow() * 100, stats.gainHigh() * 100, stats.rounds });
+        self.log("  {f} -> ({d:.1}% faster, 99% CI {d:.1}..{d:.1}%, {d} rounds)\n", .{ moveValue(move, candidates[result.winner]), stats.gain() * 100, stats.gainLow() * 100, stats.gainHigh() * 100, stats.rounds });
         return .{ .tuning = candidates[result.winner], .ratio = @exp(stats.meanLog) };
     }
 };
+
+const MoveValue = struct {
+    move: Move,
+    tuning: Tuning,
+
+    pub fn format(self: MoveValue, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        for (self.move, 0..) |axis, i| {
+            if (i > 0) try writer.writeAll(" ");
+            try writer.print("{t}={f}", .{ axis, valueOf(axis, self.tuning) });
+        }
+    }
+};
+
+fn moveValue(move: Move, tuning: Tuning) MoveValue {
+    return .{ .move = move, .tuning = tuning };
+}
 
 const AxisValue = struct {
     axis: Axis,
@@ -462,27 +556,27 @@ pub fn tuneWith(allocator: std.mem.Allocator, bench: Bench, profile: HardwarePro
         tuner.log("\n", .{});
     }
     var changes: usize = 0;
-    var testedAtChange: [axes.len]?usize = @splat(null);
-    var held: [axes.len]Candidates = @splat(.{});
-    var frozen: [axes.len]bool = @splat(false);
-    for (axes, &held) |axis, *values| values.add(axisValue(axis, current));
+    var testedAtChange: [MOVES.len]?usize = @splat(null);
+    var held: [MOVES.len]History = @splat(.{});
+    var frozen: [MOVES.len]bool = @splat(false);
+    for (MOVES, &held) |move, *history| history.add(moveKey(move, current));
 
     for (0..options.maxPasses) |pass| {
         tuner.log("pass {d}\n", .{pass + 1});
         var passRatio: f64 = 1;
         var tested: usize = 0;
-        for (axes, &testedAtChange, &held, &frozen) |axis, *testedAt, *values, *isFrozen| {
+        for (MOVES, &testedAtChange, &held, &frozen) |move, *testedAt, *history, *isFrozen| {
             if (isFrozen.* or testedAt.* == changes) continue;
             tested += 1;
-            const step = try tuner.tuneAxis(axis, current);
+            const step = try tuner.tuneMove(move, current);
             if (!step.tuning.eql(current)) {
-                const value = axisValue(axis, step.tuning);
-                if (values.contains(value)) {
-                    tuner.log("  {t:<22} frozen: it wants a value it already held, so it is within noise\n", .{axis});
+                const key = moveKey(move, step.tuning);
+                if (history.contains(key)) {
+                    tuner.log("  {f} frozen: it wants values it already held, so it is within noise\n", .{moveValue(move, step.tuning)});
                     isFrozen.* = true;
                     continue;
                 }
-                values.add(value);
+                history.add(key);
                 current = step.tuning;
                 passRatio *= step.ratio;
                 changes += 1;

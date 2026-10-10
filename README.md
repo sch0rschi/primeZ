@@ -93,6 +93,10 @@ caches automatically.
   cost ratio to that value. After 4 rounds, a candidate that is confidently
   not 1% faster is dropped. A winner needs a 99% confidence interval below
   zero and a mean gain of at least 1%.
+- Parameters that interact are also searched in pairs: segment min/max,
+  and each stride with its divisor. A pair move races the grid of
+  neighboring values of both parameters, so it finds gains that need
+  both to change at once.
 - The tuner times with per-thread CPU time where available, so time spent
   descheduled by other processes does not count. It measures the noise
   first and refuses to tune above 10% (`--tune-anyway` overrides).
