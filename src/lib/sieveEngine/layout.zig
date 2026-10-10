@@ -73,7 +73,7 @@ pub const Layout = struct {
         std.debug.assert(l1Stride >= 8);
         const l2Stride = std.mem.alignBackward(usize, std.math.clamp(l2StrideElems, l1Stride, segmentElems), 8);
         const preLargeThreshold = segmentElems * PRE_LARGE_SEGMENT_FACTOR;
-        const smallStrideCap = maxPrimeAdvancingAtMost(segmentElems);
+        const smallStrideCap = @min(maxPrimeAdvancingAtMost(segmentElems), segmentElems / 2);
         const smallL1StrideThreshold = @min(l1Stride / tuning.smallL1StrideDivisor, smallStrideCap);
         const smallL2StrideThreshold = @min(@max(l2Stride / tuning.smallL2StrideDivisor, smallL1StrideThreshold), smallStrideCap);
         const smallSegmentThreshold = @min(@max(segmentElems * tuning.smallSegmentPercent / 100, smallL2StrideThreshold), preLargeThreshold);
@@ -93,6 +93,10 @@ pub const Layout = struct {
         return layout;
     }
 
+    pub fn padElems(self: Layout) usize {
+        return std.mem.alignForward(usize, self.smallL2StrideThreshold + 128, 64);
+    }
+
     pub fn isSound(self: Layout) bool {
         return std.math.isPowerOfTwo(self.segmentElems) and
             self.segmentElems >= MIN_PINNED_SEGMENT_ELEMS and self.segmentElems <= MAX_SEGMENT_ELEMS and
@@ -102,7 +106,8 @@ pub const Layout = struct {
             self.smallSegmentThreshold <= self.mediumThreshold and
             self.mediumThreshold <= self.preLargeThreshold and
             self.preLargeThreshold == self.segmentElems * PRE_LARGE_SEGMENT_FACTOR and
-            maxWheel30Advance(self.smallL2StrideThreshold) <= self.segmentElems;
+            maxWheel30Advance(self.smallL2StrideThreshold) <= self.segmentElems and
+            self.padElems() <= self.segmentElems;
     }
 
     pub fn forQuery(profile: HardwareProfile, limit: usize, presieve: PresieveKind) Layout {

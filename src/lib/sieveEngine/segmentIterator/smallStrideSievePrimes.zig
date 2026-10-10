@@ -12,15 +12,15 @@ comptime {
     if (LayoutMod.MAX_SEGMENT_ELEMS > 1 << 23) @compileError("MAX_SEGMENT_ELEMS exceeds CompactSievePrime.localOffset's u23 budget - widen that field before raising this bound");
 }
 
+const TAIL_MARGIN = 128;
+
 inline fn applyCompactSievePrimeIntoSegment(
     comptime inBucketIndex: u3,
     buckets: Types.SIEVE_BUCKETS_TYPE,
-    bucketsStart: usize,
-    bucketsEndExclusive: usize,
+    bucketCount: usize,
     segmentElems: usize,
     entry: *CompactSievePrime,
 ) void {
-    const bucketCount = bucketsEndExclusive - bucketsStart;
     const initialBucketIndex = @as(usize, entry.initialBucketIndex);
     var currentBucketIndex: usize = entry.localOffset;
 
@@ -63,30 +63,16 @@ inline fn applyCompactSievePrimeIntoSegment(
     inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |bit| {
         bitAdvance[bit] = initialBucketIndex * byBit[bit].divMultiplicator + byBit[bit].residueAddend;
     }
-    const lastAdvance = initialBucketIndex * accumulatedWheelPattern[7].divMultiplicator + accumulatedWheelPattern[7].residueAddend;
     const wheelAdvance = initialBucketIndex * accumulatedWheelPattern[8].divMultiplicator + accumulatedWheelPattern[8].residueAddend;
 
-    while (currentBucketIndex + lastAdvance < bucketCount) {
+    while (currentBucketIndex < bucketCount) {
         const window = buckets[currentBucketIndex..];
         inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |bit| {
             window[bitAdvance[bit]] &= ~@as(Types.SIEVE_BUCKET_TYPE, 1 << bit);
         }
         currentBucketIndex += wheelAdvance;
     }
-
-    inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
-        const index = currentBucketIndex + initialBucketIndex * accumulatedWheelPattern[ari].divMultiplicator + accumulatedWheelPattern[ari].residueAddend;
-        if (index < bucketCount) {
-            buckets[index] &= accumulatedWheelPattern[ari].bitMask;
-        } else {
-            const reduced = if (index >= segmentElems) index - segmentElems else index;
-            entry.localOffset = @intCast(reduced);
-            entry.wheelStepIndex = wheelStepIndex +% @as(u3, ari);
-            return;
-        }
-    } else {
-        unreachable;
-    }
+    entry.localOffset = @intCast(if (currentBucketIndex >= segmentElems) currentBucketIndex - segmentElems else currentBucketIndex);
 }
 
 pub const SmallStrideSievePrimes = struct {
@@ -97,7 +83,7 @@ pub const SmallStrideSievePrimes = struct {
 
     segmentElems: usize,
     strideElems: usize,
-    maxStepElems: usize,
+    tailElems: usize,
 
     pub fn init(allocator: std.mem.Allocator, segmentElems: usize, strideElems: usize, minPrimeExclusive: usize, maxPrime: usize) !SmallStrideSievePrimes {
         std.debug.assert(LayoutMod.maxWheel30Advance(maxPrime) <= segmentElems);
@@ -115,7 +101,7 @@ pub const SmallStrideSievePrimes = struct {
             .active = active,
             .segmentElems = segmentElems,
             .strideElems = strideElems,
-            .maxStepElems = LayoutMod.maxWheel30Advance(maxPrime),
+            .tailElems = maxPrime + TAIL_MARGIN,
         };
     }
 
@@ -173,12 +159,12 @@ pub const SmallStrideSievePrimes = struct {
         var strideEnd = bucketsStart;
         while (strideEnd < bucketsEndExclusive) {
             const nextEnd = strideEnd + self.strideElems;
-            strideEnd = if (nextEnd + self.maxStepElems > bucketsEndExclusive) bucketsEndExclusive else nextEnd;
+            strideEnd = if (nextEnd + self.tailElems > bucketsEndExclusive) bucketsEndExclusive else nextEnd;
 
             inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
                 for (self.active[ari].items) |*entry| {
                     if (bucketsStart + entry.localOffset < strideEnd) {
-                        applyCompactSievePrimeIntoSegment(ari, buckets, bucketsStart, strideEnd, self.segmentElems, entry);
+                        applyCompactSievePrimeIntoSegment(ari, buckets, strideEnd - bucketsStart, self.segmentElems, entry);
                     }
                 }
             }

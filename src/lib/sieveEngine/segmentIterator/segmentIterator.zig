@@ -19,6 +19,17 @@ const LargeSievePrimes = @import("largeSievePrimes.zig").LargeSievePrimes;
 
 const ALIGNMENT = std.mem.Alignment.@"8";
 
+fn carryPad(buckets: []u8, segmentElems: usize, pad: usize) void {
+    const V = 64;
+    var i: usize = 0;
+    while (i < pad) : (i += V) {
+        const h: @Vector(V, u8) = buckets[i..][0..V].*;
+        const t: @Vector(V, u8) = buckets[segmentElems + i ..][0..V].*;
+        buckets[i..][0..V].* = h & t;
+        buckets[segmentElems + i ..][0..V].* = @splat(0xFF);
+    }
+}
+
 const BUCKET_BITS = @bitSizeOf(Types.SIEVE_BUCKET_TYPE);
 
 const Segment = struct {
@@ -143,18 +154,21 @@ pub const SegmentIterator = struct {
         const layout = layouts.query;
         const segmentElems = layout.segmentElems;
         const bucketsLength = ALIGNMENT.forward(Utils.getSieveLength(limitInclusive));
+        const pad = layout.padElems();
+        const sieveLen = @min(segmentElems, bucketsLength);
         const buckets = try allocator.alignedAlloc(
             Types.SIEVE_BUCKET_TYPE,
             ALIGNMENT,
-            @min(segmentElems, bucketsLength),
+            sieveLen + pad,
         );
+        @memset(buckets[sieveLen..], 0xFF);
 
         const containers: Types.SIEVE_CONTAINERS_TYPE = std.mem.bytesAsSlice(u64, std.mem.sliceAsBytes(buckets));
 
         const startBucketIndex = ALIGNMENT.backward(startInclusive / Comptimes.WHEEL_CIRCUMFERENCE);
         const bucketsEndExclusive = @min(startBucketIndex + segmentElems, bucketsLength);
 
-        PreSieve.fill(layout.presieve, buckets, startBucketIndex);
+        PreSieve.fill(layout.presieve, buckets[0..sieveLen], startBucketIndex);
         if (startBucketIndex == 0) {
             PreSieve.applyOverride(layout.presieve, buckets);
         }
@@ -202,7 +216,8 @@ pub const SegmentIterator = struct {
             }
             self.bucketsStart = candidateBucketsStart;
             self.bucketsEndExclusive = @min(self.bucketsStart + self.layout.segmentElems, self.bucketsLength);
-            PreSieve.fill(self.layout.presieve, self.buckets, self.bucketsStart);
+            PreSieve.fill(self.layout.presieve, self.buckets[0..self.layout.segmentElems], self.bucketsStart);
+            carryPad(self.buckets, self.layout.segmentElems, self.layout.padElems());
         }
 
         self.tiers.crossOff(self.buckets, self.bucketsStart, self.bucketsEndExclusive);
@@ -232,18 +247,21 @@ noinline fn discoverSievingPrimes(
 
     const selfSegmentElems = selfLayout.segmentElems;
     const selfBucketsLength = ALIGNMENT.forward(Utils.getSieveLength(rootPrime));
+    const selfPad = selfLayout.padElems();
+    const selfSieveLen = @min(selfSegmentElems, selfBucketsLength);
     const selfBuckets = try allocator.alignedAlloc(
         Types.SIEVE_BUCKET_TYPE,
         ALIGNMENT,
-        @min(selfSegmentElems, selfBucketsLength),
+        selfSieveLen + selfPad,
     );
+    @memset(selfBuckets[selfSieveLen..], 0xFF);
     defer allocator.free(selfBuckets);
     const selfContainers: Types.SIEVE_CONTAINERS_TYPE = std.mem.bytesAsSlice(u64, std.mem.sliceAsBytes(selfBuckets));
 
     var selfTiers = try Tiers.init(allocator, selfLayout, dsp);
     defer selfTiers.deinit(allocator);
 
-    PreSieve.fill(selfLayout.presieve, selfBuckets, 0);
+    PreSieve.fill(selfLayout.presieve, selfBuckets[0..selfSieveLen], 0);
     PreSieve.applyOverride(selfLayout.presieve, selfBuckets);
 
     var selfBucketsStart: usize = 0;
@@ -259,7 +277,8 @@ noinline fn discoverSievingPrimes(
             if (candidate >= selfBucketsLength) break;
             selfBucketsStart = candidate;
             selfBucketsEndExclusive = @min(selfBucketsStart + selfSegmentElems, selfBucketsLength);
-            PreSieve.fill(selfLayout.presieve, selfBuckets, selfBucketsStart);
+            PreSieve.fill(selfLayout.presieve, selfBuckets[0..selfSegmentElems], selfBucketsStart);
+            carryPad(selfBuckets, selfSegmentElems, selfPad);
         }
 
         selfTiers.crossOff(selfBuckets, selfBucketsStart, selfBucketsEndExclusive);
