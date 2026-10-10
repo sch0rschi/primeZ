@@ -87,6 +87,10 @@ file name carries the cache sizes, so machines that share a home directory
 keep separate results. Every later run loads the file for its detected
 caches automatically.
 - `--tune-seconds <s>` and `--tune-repeats <n>` trade tuning time for noise.
+- The tuner times with per-thread CPU time where available, so time spent
+  descheduled by other processes does not count. It measures the noise
+  first and refuses to tune above 10% (`--tune-anyway` overrides).
+  `--tune-cpu <n>` pins it to one core (Linux).
 - `--tune-out <file|->` saves the result elsewhere or prints it.
 - `--tuning <file>` loads a specific file.
 - `--no-tuning` ignores all tunings.

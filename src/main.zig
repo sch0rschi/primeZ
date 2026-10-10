@@ -112,6 +112,7 @@ pub fn main(init: std.process.Init) !void {
     var tune = false;
     var tuneOut: ?[]const u8 = null;
     var tuneOptions: primeZ.Tune.Options = .{};
+    var tuneCpu: ?usize = null;
     var positional: [2]usize = undefined;
     var positionalCount: usize = 0;
     while (argIter.next()) |arg| {
@@ -132,6 +133,10 @@ pub fn main(init: std.process.Init) !void {
             tuneOut = argIter.next() orelse return error.MissingTuneOutPath;
         } else if (std.mem.eql(u8, arg, "--tune-seconds")) {
             tuneOptions.targetSeconds = try std.fmt.parseFloat(f64, argIter.next() orelse return error.MissingTuneSeconds);
+        } else if (std.mem.eql(u8, arg, "--tune-cpu")) {
+            tuneCpu = try std.fmt.parseInt(usize, argIter.next() orelse return error.MissingTuneCpu, 10);
+        } else if (std.mem.eql(u8, arg, "--tune-anyway")) {
+            tuneOptions.allowNoisy = true;
         } else if (std.mem.eql(u8, arg, "--tune-max-passes")) {
             tuneOptions.maxPasses = @max(1, try std.fmt.parseInt(usize, argIter.next() orelse return error.MissingTuneMaxPasses, 10));
         } else if (std.mem.eql(u8, arg, "--tune-repeats")) {
@@ -183,6 +188,13 @@ pub fn main(init: std.process.Init) !void {
         } else if (LayoutMod.BUILD_TUNING != null and selection.profile.eql(LayoutMod.BUILD_PROFILE)) {
             tuneOptions.start = LayoutMod.BUILD_TUNING.?;
             std.debug.print("Starting from the build tuning\n", .{});
+        }
+        if (tuneCpu) |cpu| {
+            primeZ.Tune.pinToCpu(cpu) catch |err| {
+                std.debug.print("error: cannot pin to CPU {d}: {t}\n", .{ cpu, err });
+                return err;
+            };
+            std.debug.print("Pinned to CPU {d}\n", .{cpu});
         }
         return runTuner(allocator, io, selection, tuneOptions, outPath);
     }

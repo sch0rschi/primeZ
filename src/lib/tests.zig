@@ -431,3 +431,52 @@ test "a short last stride does not cross off an entry a second time" {
     const layouts = LayoutMod.QueryLayouts{ .query = layout, .selfSieve = layout };
     try std.testing.expectEqual(@as(usize, 482_449), try Primes.piSieveCountingWithLayouts(allocator, 1_000_000_000, 1_010_000_000, layouts));
 }
+
+const Tune = @import("tune.zig");
+
+const FakeBench = struct {
+    random: std.Random.DefaultPrng,
+    noise: f64,
+    gains: []const FakeGain,
+
+    const FakeGain = struct { mediumSegmentFactor: ?usize = null, smallL1StrideDivisor: ?usize = null, segmentMaxKiB: ?usize = null, l2StrideKiB: ?usize = null, smallL2StrideDivisor: ?usize = null, gain: f64 };
+
+    fn bench(self: *FakeBench, scenarioCount: usize) Tune.Bench {
+        return .{ .ptr = self, .scenarioCount = scenarioCount, .measureFn = measure };
+    }
+
+    fn measure(ptr: *anyopaque, tuning: LayoutMod.Tuning, scenario: usize) anyerror!?f64 {
+        _ = scenario;
+        const self: *FakeBench = @ptrCast(@alignCast(ptr));
+        var cost: f64 = 1;
+        for (self.gains) |g| {
+            const hit = (g.mediumSegmentFactor == null or g.mediumSegmentFactor.? == tuning.mediumSegmentFactor) and
+                (g.smallL1StrideDivisor == null or g.smallL1StrideDivisor.? == tuning.smallL1StrideDivisor) and
+                (g.segmentMaxKiB == null or g.segmentMaxKiB.? == tuning.segmentMaxKiB) and
+                (g.l2StrideKiB == null or g.l2StrideKiB.? == tuning.l2StrideKiB) and
+                (g.smallL2StrideDivisor == null or g.smallL2StrideDivisor.? == tuning.smallL2StrideDivisor);
+            if (hit) cost *= 1 - g.gain;
+        }
+        return cost * (1 + self.noise * self.random.random().float(f64));
+    }
+};
+
+const FAKE_PROFILE = LayoutMod.HardwareProfile.fromKiB(48, 1024, 16 * 1024);
+
+test "the tuner finds planted gains and ignores parameters that do not matter" {
+    const gains = [_]FakeBench.FakeGain{
+        .{ .mediumSegmentFactor = 8, .gain = 0.10 },
+        .{ .smallL1StrideDivisor = 3, .gain = 0.05 },
+    };
+    var fake = FakeBench{ .random = .init(1), .noise = 0.005, .gains = &gains };
+    const result = try Tune.tuneWith(std.testing.allocator, fake.bench(4), FAKE_PROFILE, .{ .verbose = false });
+    var expected = LayoutMod.Tuning.DEFAULT;
+    expected.mediumSegmentFactor = 8;
+    expected.smallL1StrideDivisor = 3;
+    try std.testing.expect(result.tuning.eql(expected));
+}
+
+test "the tuner refuses a machine that is too noisy" {
+    var fake = FakeBench{ .random = .init(2), .noise = 0.5, .gains = &.{} };
+    try std.testing.expectError(error.TooNoisy, Tune.tuneWith(std.testing.allocator, fake.bench(4), FAKE_PROFILE, .{ .verbose = false }));
+}

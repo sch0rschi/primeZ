@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const LayoutMod = @import("sieveEngine/layout.zig");
 const PreSieve = @import("sieveEngine/preSieve.zig");
 const Primes = @import("primes.zig");
@@ -15,13 +16,29 @@ pub const Options = struct {
     minPassGain: f64 = 0.01,
     start: Tuning = Tuning.DEFAULT,
     verbose: bool = true,
+    seed: u64 = 0x5eed_7e57,
+    maxNoise: f64 = 0.10,
+    allowNoisy: bool = false,
 };
 
 pub const Result = struct {
     tuning: Tuning,
     defaultCost: f64,
     tunedCost: f64,
+    noise: f64,
 };
+
+pub const Bench = struct {
+    ptr: *anyopaque,
+    scenarioCount: usize,
+    measureFn: *const fn (ptr: *anyopaque, tuning: Tuning, scenario: usize) anyerror!?f64,
+
+    pub fn measure(self: Bench, tuning: Tuning, scenario: usize) !?f64 {
+        return self.measureFn(self.ptr, tuning, scenario);
+    }
+};
+
+const NOISE_SAMPLES = 5;
 
 const Scenario = struct {
     name: []const u8,
@@ -39,6 +56,7 @@ const SCENARIO_LIMITS = [_]struct { name: []const u8, limit: u64 }{
 };
 
 const MAX_CANDIDATES = 16;
+const MAX_SCENARIOS = 8;
 const MIN_WIDTH: u64 = 1_000_000;
 const SETUP_SHARE_INVERSE = 4;
 
@@ -75,34 +93,65 @@ const Axis = enum {
     presieve,
 };
 
-const Tuner = struct {
+const SieveBench = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     selection: Selection,
-    options: Options,
-    scenarios: [SCENARIO_LIMITS.len]Scenario,
+    clock: std.Io.Clock,
+    targetSeconds: f64,
+    repeats: usize,
+    verbose: bool,
+    scenarios: [SCENARIO_LIMITS.len]Scenario = undefined,
 
-    fn log(self: *const Tuner, comptime fmt: []const u8, args: anytype) void {
-        if (self.options.verbose) std.debug.print(fmt, args);
+    const Run = struct { seconds: f64, primes: usize };
+
+    fn init(allocator: std.mem.Allocator, io: std.Io, selection: Selection, options: Options) SieveBench {
+        const threadClock = if (std.Io.Clock.cpu_thread.resolution(io)) |r| r.toNanoseconds() > 0 else |_| false;
+        return .{
+            .allocator = allocator,
+            .io = io,
+            .selection = selection.withTuning(Tuning.DEFAULT, .default),
+            .clock = if (threadClock) .cpu_thread else .awake,
+            .targetSeconds = options.targetSeconds,
+            .repeats = options.repeats,
+            .verbose = options.verbose,
+        };
     }
 
-    fn layoutsFor(self: *const Tuner, tuning: Tuning, limit: u64) LayoutMod.QueryLayouts {
-        return LayoutMod.QueryLayouts.forSelection(self.selection.withTuning(tuning, .autotuned), limit);
+    fn bench(self: *SieveBench) Bench {
+        return .{ .ptr = self, .scenarioCount = self.scenarios.len, .measureFn = measureErased };
     }
 
-    fn timeRun(self: *const Tuner, tuning: Tuning, start: u64, limit: u64) !struct { seconds: f64, primes: usize } {
-        const layouts = self.layoutsFor(tuning, limit);
-        const t0 = std.Io.Clock.now(.awake, self.io);
+    fn log(self: *const SieveBench, comptime fmt: []const u8, args: anytype) void {
+        if (self.verbose) std.debug.print(fmt, args);
+    }
+
+    fn timeRun(self: *const SieveBench, tuning: Tuning, start: u64, limit: u64) !Run {
+        const layouts = LayoutMod.QueryLayouts.forSelection(self.selection.withTuning(tuning, .autotuned), limit);
+        const t0 = self.clock.now(self.io);
         const primes = try Primes.piSieveCountingWithLayouts(self.allocator, start, limit, layouts);
-        const t1 = std.Io.Clock.now(.awake, self.io);
+        const t1 = self.clock.now(self.io);
         const ns = t0.durationTo(t1).toNanoseconds();
         return .{ .seconds = @as(f64, @floatFromInt(ns)) / std.time.ns_per_s, .primes = primes };
     }
 
-    fn calibrate(self: *Tuner) !void {
+    fn measureErased(ptr: *anyopaque, tuning: Tuning, scenario: usize) anyerror!?f64 {
+        const self: *SieveBench = @ptrCast(@alignCast(ptr));
+        const s = self.scenarios[scenario];
+        const r = try self.timeRun(tuning, s.start, s.limit);
+        if (r.primes != s.primes) {
+            self.log("  ! {s} counted {d} primes, expected {d}\n", .{ s.name, r.primes, s.primes });
+            return null;
+        }
+        return r.seconds / s.baseSeconds;
+    }
+
+    fn calibrate(self: *SieveBench) !void {
+        self.log("timing with {s}, calibrating scenarios for ~{d:.2}s each\n", .{ if (self.clock == .cpu_thread) "thread CPU time" else "wall time", self.targetSeconds });
         for (SCENARIO_LIMITS, &self.scenarios) |spec, *scenario| {
+            _ = try self.scenarioRun(spec.limit, MIN_WIDTH);
             const setup = if (spec.limit == 0) 0 else (try self.scenarioRunBest(spec.limit, MIN_WIDTH)).seconds;
-            const target = @max(self.options.targetSeconds, SETUP_SHARE_INVERSE * setup);
+            const target = @max(self.targetSeconds, SETUP_SHARE_INVERSE * setup);
             var width: u64 = 100_000_000;
             var run = try self.scenarioRun(spec.limit, width);
             var iterations: usize = 0;
@@ -126,54 +175,82 @@ const Tuner = struct {
         }
     }
 
-    fn scenarioRun(self: *const Tuner, specLimit: u64, width: u64) !struct { seconds: f64, primes: usize } {
-        const r = if (specLimit == 0) try self.timeRun(Tuning.DEFAULT, 0, width) else try self.timeRun(Tuning.DEFAULT, specLimit - width, specLimit);
-        return .{ .seconds = r.seconds, .primes = r.primes };
+    fn scenarioRun(self: *const SieveBench, specLimit: u64, width: u64) !Run {
+        return if (specLimit == 0) try self.timeRun(Tuning.DEFAULT, 0, width) else try self.timeRun(Tuning.DEFAULT, specLimit - width, specLimit);
     }
 
-    fn scenarioRunBest(self: *const Tuner, specLimit: u64, width: u64) !struct { seconds: f64, primes: usize } {
+    fn scenarioRunBest(self: *const SieveBench, specLimit: u64, width: u64) !Run {
         var best = try self.scenarioRun(specLimit, width);
-        for (1..self.options.repeats) |_| {
+        for (1..self.repeats) |_| {
             const r = try self.scenarioRun(specLimit, width);
             if (r.primes != best.primes) return error.InconsistentPrimeCount;
             best.seconds = @min(best.seconds, r.seconds);
         }
-        return .{ .seconds = best.seconds, .primes = best.primes };
+        return best;
+    }
+};
+
+const Tuner = struct {
+    allocator: std.mem.Allocator,
+    bench: Bench,
+    profile: HardwareProfile,
+    options: Options,
+    random: std.Random.DefaultPrng,
+    minGain: f64,
+
+    fn log(self: *const Tuner, comptime fmt: []const u8, args: anytype) void {
+        if (self.options.verbose) std.debug.print(fmt, args);
     }
 
-    fn evaluate(self: *const Tuner, candidates: []const Tuning, costs: []f64, repeats: usize) !void {
-        var best: [MAX_CANDIDATES + 1][SCENARIO_LIMITS.len]f64 = undefined;
+    fn shuffledOrder(self: *Tuner, order: []usize) void {
+        for (order, 0..) |*o, i| o.* = i;
+        self.random.random().shuffle(usize, order);
+    }
+
+    fn estimateNoise(self: *Tuner) !f64 {
+        var noise: f64 = 0;
+        for (0..self.bench.scenarioCount) |s| {
+            var samples: [NOISE_SAMPLES]f64 = undefined;
+            for (&samples) |*sample| sample.* = (try self.bench.measure(Tuning.DEFAULT, s)) orelse return error.InconsistentPrimeCount;
+            std.mem.sortUnstable(f64, &samples, {}, std.sort.asc(f64));
+            noise = @max(noise, samples[NOISE_SAMPLES / 2] / samples[0] - 1);
+        }
+        return noise;
+    }
+
+    fn evaluate(self: *Tuner, candidates: []const Tuning, costs: []f64, repeats: usize) !void {
+        var best: [MAX_CANDIDATES + 1][MAX_SCENARIOS]f64 = undefined;
         for (best[0..candidates.len]) |*row| row.* = @splat(std.math.inf(f64));
         var broken: [MAX_CANDIDATES + 1]bool = @splat(false);
+        var order: [MAX_CANDIDATES + 1]usize = undefined;
 
         for (0..repeats) |_| {
-            for (self.scenarios, 0..) |scenario, s| {
-                for (candidates, 0..) |candidate, c| {
+            for (0..self.bench.scenarioCount) |s| {
+                self.shuffledOrder(order[0..candidates.len]);
+                for (order[0..candidates.len]) |c| {
                     if (broken[c]) continue;
-                    const r = try self.timeRun(candidate, scenario.start, scenario.limit);
-                    if (r.primes != scenario.primes) {
-                        self.log("  ! rejecting candidate: {s} counted {d} primes, expected {d}\n", .{ scenario.name, r.primes, scenario.primes });
+                    const cost = (try self.bench.measure(candidates[c], s)) orelse {
                         broken[c] = true;
                         continue;
-                    }
-                    best[c][s] = @min(best[c][s], r.seconds);
+                    };
+                    best[c][s] = @min(best[c][s], cost);
                 }
             }
         }
 
-        for (candidates, costs, 0..) |_, *cost, c| {
+        for (costs[0..candidates.len], 0..) |*cost, c| {
             if (broken[c]) {
                 cost.* = std.math.inf(f64);
                 continue;
             }
             var sum: f64 = 0;
-            for (self.scenarios, best[c]) |scenario, seconds| sum += seconds / scenario.baseSeconds;
-            cost.* = sum / @as(f64, @floatFromInt(self.scenarios.len));
+            for (best[c][0..self.bench.scenarioCount]) |b| sum += b;
+            cost.* = sum / @as(f64, @floatFromInt(self.bench.scenarioCount));
         }
     }
 
     fn candidatesFor(self: *const Tuner, axis: Axis, current: Tuning) Candidates {
-        const profile = self.selection.profile;
+        const profile = self.profile;
         var c: Candidates = .{};
         switch (axis) {
             .segmentMinKiB, .segmentMaxKiB => {
@@ -220,7 +297,7 @@ const Tuner = struct {
 
     const Step = struct { tuning: Tuning, ratio: f64 };
 
-    fn tuneAxis(self: *const Tuner, axis: Axis, incumbent: Tuning) !Step {
+    fn tuneAxis(self: *Tuner, axis: Axis, incumbent: Tuning) !Step {
         const unchanged: Step = .{ .tuning = incumbent, .ratio = 1 };
         const values = self.candidatesFor(axis, incumbent);
         if (values.len == 0) return unchanged;
@@ -243,7 +320,7 @@ const Tuner = struct {
         for (costs[1..count], 1..) |cost, i| {
             if (cost < costs[bestIndex]) bestIndex = i;
         }
-        if (bestIndex == 0 or costs[bestIndex] >= costs[0] * (1 - self.options.minGain)) {
+        if (bestIndex == 0 or costs[bestIndex] >= costs[0] * (1 - self.minGain)) {
             self.log("  {t:<22} keep {f} ({d:.3})\n", .{ axis, valueOf(axis, incumbent), costs[0] });
             return unchanged;
         }
@@ -251,7 +328,7 @@ const Tuner = struct {
         const duel = [_]Tuning{ incumbent, candidates[bestIndex] };
         var confirmed: [2]f64 = undefined;
         try self.evaluate(&duel, &confirmed, self.options.repeats + 2);
-        if (confirmed[1] >= confirmed[0] * (1 - self.options.minGain)) {
+        if (confirmed[1] >= confirmed[0] * (1 - self.minGain)) {
             self.log("  {t:<22} keep {f} ({f} looked {d:.1}% faster, confirmed only {d:.1}%)\n", .{ axis, valueOf(axis, incumbent), valueOf(axis, candidates[bestIndex]), (1 - costs[bestIndex] / costs[0]) * 100, (1 - confirmed[1] / confirmed[0]) * 100 });
             return unchanged;
         }
@@ -286,17 +363,41 @@ fn valueOf(axis: Axis, tuning: Tuning) AxisValue {
     return .{ .axis = axis, .tuning = tuning };
 }
 
+pub fn pinToCpu(cpu: usize) !void {
+    if (builtin.os.tag != .linux) return error.Unsupported;
+    var set: std.os.linux.cpu_set_t = @splat(0);
+    if (cpu >= set.len * @bitSizeOf(usize)) return error.InvalidCpu;
+    set[cpu / @bitSizeOf(usize)] |= @as(usize, 1) << @intCast(cpu % @bitSizeOf(usize));
+    try std.os.linux.sched_setaffinity(0, &set);
+}
+
 pub fn tune(allocator: std.mem.Allocator, io: std.Io, selection: Selection, options: Options) !Result {
+    var sieve = SieveBench.init(allocator, io, selection, options);
+    try sieve.calibrate();
+    return tuneWith(allocator, sieve.bench(), selection.profile, options);
+}
+
+pub fn tuneWith(allocator: std.mem.Allocator, bench: Bench, profile: HardwareProfile, options: Options) !Result {
+    std.debug.assert(bench.scenarioCount <= MAX_SCENARIOS);
     var tuner = Tuner{
         .allocator = allocator,
-        .io = io,
-        .selection = selection.withTuning(Tuning.DEFAULT, .default),
+        .bench = bench,
+        .profile = profile,
         .options = options,
-        .scenarios = undefined,
+        .random = .init(options.seed),
+        .minGain = options.minGain,
     };
 
-    tuner.log("calibrating scenarios for ~{d:.2}s each\n", .{options.targetSeconds});
-    try tuner.calibrate();
+    const noise = try tuner.estimateNoise();
+    tuner.log("noise: {d:.1}% (median over best of {d} runs of the default)\n", .{ noise * 100, NOISE_SAMPLES });
+    if (noise > options.maxNoise) {
+        if (!options.allowNoisy) {
+            tuner.log("error: the machine is too noisy to tune ({d:.1}% > {d:.1}%); stop other work or pass --tune-anyway\n", .{ noise * 100, options.maxNoise * 100 });
+            return error.TooNoisy;
+        }
+        tuner.log("warning: tuning anyway, only gains above the noise are accepted\n", .{});
+    }
+    tuner.minGain = @max(options.minGain, noise);
 
     const axes = comptime std.enums.values(Axis);
     var current = options.start;
@@ -351,7 +452,7 @@ pub fn tune(allocator: std.mem.Allocator, io: std.Io, selection: Selection, opti
 
     var best: usize = 0;
     for (finalists[1..], finalCosts[1..], 1..) |candidate, cost, i| {
-        if (!candidate.eql(finalists[best]) and cost < finalCosts[best] * (1 - options.minGain)) best = i;
+        if (!candidate.eql(finalists[best]) and cost < finalCosts[best] * (1 - tuner.minGain)) best = i;
     }
     for (labels, finalCosts, 0..) |label, cost, i| {
         if (i == 0 or !finalists[i].eql(finalists[i - 1])) tuner.log("  {s:<8} {d:.3}{s}\n", .{ label, cost, if (i == best) " <- kept" else "" });
@@ -360,12 +461,14 @@ pub fn tune(allocator: std.mem.Allocator, io: std.Io, selection: Selection, opti
         .tuning = finalists[best],
         .defaultCost = finalCosts[0],
         .tunedCost = finalCosts[best],
+        .noise = noise,
     };
 }
 
 pub fn writeTuningFile(writer: *std.Io.Writer, result: Result, profile: HardwareProfile) std.Io.Writer.Error!void {
     try writer.print("# primeZ tuning for L1d {d} KiB, L2 {d} KiB, L3 {d} KiB\n", .{ profile.l1dBytes / 1024, profile.l2Bytes / 1024, profile.l3Bytes / 1024 });
     try writer.print("# relative cost: default {d:.3}, tuned {d:.3} ({d:.1}% faster)\n", .{ result.defaultCost, result.tunedCost, (result.defaultCost / result.tunedCost - 1) * 100 });
+    try writer.print("# measurement noise {d:.1}%\n", .{result.noise * 100});
     try writer.writeAll("# 0 = derive from the cache sizes\n");
     try result.tuning.write(writer);
 }
