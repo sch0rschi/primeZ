@@ -423,3 +423,11 @@ test "tuned layouts keep every tier within the primes it can handle" {
     try std.testing.expect(LayoutMod.maxWheel30Advance(LayoutMod.maxPrimeAdvancingAtMost(4096)) <= 4096);
     try std.testing.expect(LayoutMod.maxWheel30Advance(LayoutMod.maxPrimeAdvancingAtMost(4096) + 1) > 4096);
 }
+
+test "a short last stride does not cross off an entry a second time" {
+    const allocator = std.testing.allocator;
+    const tuning = LayoutMod.Tuning{ .smallL1StrideDivisor = 1, .smallL2StrideDivisor = 1 };
+    const layout = LayoutMod.Layout.tuned(16 * 1024, 7 * 1024, 15 * 1024, .fallback, tuning);
+    const layouts = LayoutMod.QueryLayouts{ .query = layout, .selfSieve = layout };
+    try std.testing.expectEqual(@as(usize, 482_449), try Primes.piSieveCountingWithLayouts(allocator, 1_000_000_000, 1_010_000_000, layouts));
+}

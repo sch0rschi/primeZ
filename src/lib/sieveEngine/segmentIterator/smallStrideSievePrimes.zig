@@ -97,6 +97,7 @@ pub const SmallStrideSievePrimes = struct {
 
     segmentElems: usize,
     strideElems: usize,
+    maxStepElems: usize,
 
     pub fn init(allocator: std.mem.Allocator, segmentElems: usize, strideElems: usize, minPrimeExclusive: usize, maxPrime: usize) !SmallStrideSievePrimes {
         std.debug.assert(LayoutMod.maxWheel30Advance(maxPrime) <= segmentElems);
@@ -114,6 +115,7 @@ pub const SmallStrideSievePrimes = struct {
             .active = active,
             .segmentElems = segmentElems,
             .strideElems = strideElems,
+            .maxStepElems = LayoutMod.maxWheel30Advance(maxPrime),
         };
     }
 
@@ -170,7 +172,8 @@ pub const SmallStrideSievePrimes = struct {
     ) void {
         var strideEnd = bucketsStart;
         while (strideEnd < bucketsEndExclusive) {
-            strideEnd = @min(strideEnd + self.strideElems, bucketsEndExclusive);
+            const nextEnd = strideEnd + self.strideElems;
+            strideEnd = if (nextEnd + self.maxStepElems > bucketsEndExclusive) bucketsEndExclusive else nextEnd;
 
             inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
                 for (self.active[ari].items) |*entry| {
