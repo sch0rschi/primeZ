@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const Estimates = @import("estimates.zig");
 const Comptimes = @import("sieveEngine/comptimes.zig");
@@ -168,6 +169,18 @@ pub fn piSieveCountingWithLayouts(allocator: std.mem.Allocator, start: u64, limi
 
 noinline fn collectSegmentCount(containers: []const Types.SIEVE_CONTAINER_TYPE) usize {
     var count: usize = 0;
+    if (comptime builtin.cpu.arch.isAARCH64()) {
+        // Two u64 containers per 16-byte NEON popcount; the per-byte counts
+        // sum to their popcount.
+        var idx: usize = 0;
+        while (idx + 2 <= containers.len) : (idx += 2) {
+            const words: [2]Types.SIEVE_CONTAINER_TYPE = containers[idx..][0..2].*;
+            const bytes: @Vector(16, u8) = @bitCast(words);
+            count += @as(usize, @reduce(.Add, @as(@Vector(16, u16), @popCount(bytes))));
+        }
+        if (idx < containers.len) count += @popCount(containers[idx]);
+        return count;
+    }
     for (containers) |container| {
         count += @popCount(container);
     }
