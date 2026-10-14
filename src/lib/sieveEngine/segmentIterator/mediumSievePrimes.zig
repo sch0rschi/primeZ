@@ -218,6 +218,20 @@ pub const MediumSievePrimes = struct {
         self.buckets[wheelIndex] = if (isFullBucket(next)) self.addBucket(next) else next;
     }
 
+    /// Same as `storeInBucket`, but through a caller-owned cursor array so the
+    /// row's slots stay live across `addBucket` calls.
+    inline fn storeInLocalBucket(
+        self: *MediumSievePrimes,
+        cursors: *[RESIDUE_COUNT]?[*]MediumBucketSievePrime,
+        phase: usize,
+        entry: MediumBucketSievePrime,
+    ) void {
+        const wp = cursors[phase] orelse self.addBucket(null);
+        wp[0] = entry;
+        const next = wp + 1;
+        cursors[phase] = if (isFullBucket(next)) self.addBucket(next) else next;
+    }
+
     pub noinline fn activate(self: *MediumSievePrimes, bucketsStart: usize) void {
         const ringLen = self.ringWritePos.len;
 
@@ -296,6 +310,11 @@ noinline fn crossOffGroup(
     bucket: *Bucket,
     startPhase: u3,
 ) void {
+    // Keep the residue row in locals so its slots stay live across the
+    // addBucket calls, and flush it back at the end.
+    const row = self.buckets[ari * RESIDUE_COUNT ..][0..RESIDUE_COUNT];
+    var cursors: [RESIDUE_COUNT]?[*]MediumBucketSievePrime = row.*;
+
     var block: ?*Bucket = bucket;
     while (block) |b| {
         const items = b.items();
@@ -308,7 +327,7 @@ noinline fn crossOffGroup(
             sw: switch (startPhase) {
                 inline 0...(RESIDUE_COUNT - 1) => |phase| {
                     if (i >= bucketCount) {
-                        self.storeInBucket(ari * RESIDUE_COUNT + phase, .{
+                        self.storeInLocalBucket(&cursors, phase, .{
                             .localOffset = @intCast(i - bucketCount),
                             .initialBucketIndex = entry.initialBucketIndex,
                         });
@@ -326,4 +345,6 @@ noinline fn crossOffGroup(
         self.freeBucket(b);
         block = next;
     }
+
+    row.* = cursors;
 }
