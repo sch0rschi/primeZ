@@ -70,7 +70,11 @@ buffers of at most 32 KiB, about 200 KiB in total), hardcoded in
 default they are the only presieve built in. `-Dpresieve_solver=true`
 additionally builds a presieve whose groups are solved during the build for
 the build profile's L1d size and SIMD width with presieveOpt's MILP (needs
-`python3` and `make`; the solve is cached).
+`python3` and `make`; the solve is cached). `-Dpresieve_groups=<file>` uses a
+groups file directly (one comma-separated prime list per line) instead of
+solving, e.g. one written by `presieveOpt/solve.py --write-groups-to`; this
+lets you A/B a hand-picked or externally solved presieve without touching the
+cache.
 
 ### Self-tuning
 

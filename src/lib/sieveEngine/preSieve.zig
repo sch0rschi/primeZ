@@ -155,6 +155,26 @@ pub fn PreSieve(comptime GROUPS: []const []const usize, comptime BLOB: []const u
             break :blk m;
         };
 
+        comptime {
+            // isPreSieved(prime) is `prime <= MAX_PRESIEVE_PRIME`, which is only
+            // sound if the groups cover every sieving prime up to the maximum
+            // (the solver emits contiguous prefixes, but -Dpresieve_groups
+            // bypasses it; a gap would make discovery skip an uncleared prime).
+            @setEvalBranchQuota(1_000_000);
+            var p: usize = 7;
+            while (p <= MAX_PRESIEVE_PRIME) : (p += 1) {
+                if (!Check.isPrime(p)) continue;
+                var covered = false;
+                for (PRIMES) |q| {
+                    if (q == p) {
+                        covered = true;
+                        break;
+                    }
+                }
+                if (!covered) @compileError("presieve groups must cover every prime up to the largest group prime");
+            }
+        }
+
         pub fn isPreSieved(prime: usize) bool {
             return prime <= MAX_PRESIEVE_PRIME;
         }
