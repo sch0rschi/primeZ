@@ -102,6 +102,7 @@ const Tiers = struct {
         buckets: Types.SIEVE_BUCKETS_TYPE,
         bucketsStart: usize,
         bucketsEndExclusive: usize,
+        storeForNextSegment: bool,
     ) void {
         const layout = self.layout;
         if (prime > layout.mediumThreshold) {
@@ -120,7 +121,7 @@ const Tiers = struct {
         if (prime > layout.smallSegmentThreshold) {
             if (sievePrime.currentBucketIndex < bucketsLength) self.medium.add(sievePrime, bucketsStart);
         } else if (prime > layout.smallL2StrideThreshold) {
-            self.smallSegment.add(buckets, bucketsStart, bucketsEndExclusive, sievePrime);
+            self.smallSegment.add(buckets, bucketsStart, bucketsEndExclusive, sievePrime, storeForNextSegment);
         } else {
             const stride = if (prime > layout.smallL1StrideThreshold) &self.smallL2Stride else &self.smallL1Stride;
             switch (inBucketIndex) {
@@ -300,10 +301,12 @@ noinline fn discoverSievingPrimes(
                 const bucketIndex = bitIndex / BUCKET_BITS;
                 const inBucketIndex: u3 = @intCast(bitIndex % BUCKET_BITS);
 
-                tiers.add(prime, bucketIndex, inBucketIndex, startInclusive, queryBucketsLength, outputBuckets, outputBucketsStart, outputBucketsEndExclusive);
+                // Output tier: its adds precede the first apply (current-segment base).
+                tiers.add(prime, bucketIndex, inBucketIndex, startInclusive, queryBucketsLength, outputBuckets, outputBucketsStart, outputBucketsEndExclusive, false);
 
                 if (prime <= dsp) {
-                    selfTiers.add(prime, bucketIndex, inBucketIndex, 0, std.math.maxInt(usize), selfBuckets, selfBucketsStart, selfBucketsEndExclusive);
+                    // Self-sieve tier: its adds follow this iteration's crossOff (next-segment base).
+                    selfTiers.add(prime, bucketIndex, inBucketIndex, 0, std.math.maxInt(usize), selfBuckets, selfBucketsStart, selfBucketsEndExclusive, true);
                     containerWorkingCopy &= selfContainers[localContainerIndex];
                 }
             }
