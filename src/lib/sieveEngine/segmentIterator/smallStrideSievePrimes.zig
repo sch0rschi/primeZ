@@ -16,6 +16,7 @@ const TAIL_MARGIN = 128;
 
 inline fn applyCompactSievePrimeIntoSegment(
     comptime inBucketIndex: u3,
+    comptime resumeAtComptime: ?u3,
     buckets: Types.SIEVE_BUCKETS_TYPE,
     bucketCount: usize,
     segmentElems: usize,
@@ -55,7 +56,8 @@ inline fn applyCompactSievePrimeIntoSegment(
         break :blk byBit;
     };
 
-    const wheelStepIndex = entry.wheelStepIndex;
+    if (resumeAtComptime) |r| std.debug.assert(r == entry.wheelStepIndex);
+    const wheelStepIndex = resumeAtComptime orelse entry.wheelStepIndex;
     const accumulatedWheelPattern = &ROTATED_ACCUMULATED[wheelStepIndex];
     const byBit = &ROTATED_BY_BIT[wheelStepIndex];
 
@@ -164,7 +166,13 @@ pub const SmallStrideSievePrimes = struct {
             inline for (0..Comptimes.ADMISSIBLE_RESIDUES.count) |ari| {
                 for (self.active[ari].items) |*entry| {
                     if (bucketsStart + entry.localOffset < strideEnd) {
-                        applyCompactSievePrimeIntoSegment(ari, buckets, strideEnd - bucketsStart, self.segmentElems, entry);
+                        // Start=0 entries mostly have step index == residue
+                        // index; use the comptime wheel tables for those.
+                        if (entry.wheelStepIndex == ari) {
+                            applyCompactSievePrimeIntoSegment(ari, ari, buckets, strideEnd - bucketsStart, self.segmentElems, entry);
+                        } else {
+                            applyCompactSievePrimeIntoSegment(ari, null, buckets, strideEnd - bucketsStart, self.segmentElems, entry);
+                        }
                     }
                 }
             }
