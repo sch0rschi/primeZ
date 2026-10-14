@@ -129,6 +129,7 @@ pub const LargeSievePrimes = struct {
             self.freeBlocks = fb.next;
             break :blk fb;
         } else blk: {
+            @branchHint(.unlikely);
             std.debug.assert(self.nextUnclaimed < self.blockPool.len);
             const b = &self.blockPool[self.nextUnclaimed];
             self.nextUnclaimed += 1;
@@ -148,7 +149,10 @@ pub const LargeSievePrimes = struct {
         const wp = ringWritePos[slot];
         wp[0] = entry.*;
         const next = wp + 1;
-        ringWritePos[slot] = if (isFull(next)) self.addBlock(next) else next;
+        ringWritePos[slot] = if (isFull(next)) blk: {
+            @branchHint(.unlikely);
+            break :blk self.addBlock(next);
+        } else next;
     }
 
     pub fn toRingEntry(sievePrime: SievePrime, bucketsStart: usize, segmentsAhead: usize, segmentShift: std.math.Log2Int(usize)) RingEntry {
